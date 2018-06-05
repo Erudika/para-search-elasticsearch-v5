@@ -1,5 +1,7 @@
 FROM openjdk:8-jdk-alpine
 
+RUN mkdir -p /para/lib
+
 WORKDIR /para
 
 ENV PARA_PLUGIN_ID="para-search-elasticsearch-v5" \
