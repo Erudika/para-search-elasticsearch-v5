@@ -56,14 +56,14 @@
 		<skipITs>${skipTests}</skipITs>
 		<skipUTs>${skipTests}</skipUTs>
 		<elasticsearch.version>5.6.9</elasticsearch.version>
-		<jerseyVer>2.26</jerseyVer>
+		<jerseyVer>2.27</jerseyVer>
 	</properties>
 
 	<dependencies>
 		<dependency>
 			<groupId>com.erudika</groupId>
 			<artifactId>para-core</artifactId>
-			<version>1.29.0</version>
+			<version>1.29.2</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
@@ -118,7 +118,7 @@
 			<plugin>
 				<groupId>com.github.alexcojocaru</groupId>
 				<artifactId>elasticsearch-maven-plugin</artifactId>
-				<version>6.4</version>
+				<version>6.5</version>
 				<configuration>
 					<skip>${skipITs}</skip>
 					<autoCreateIndex>false</autoCreateIndex>
@@ -148,7 +148,7 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-shade-plugin</artifactId>
-				<version>3.1.0</version>
+				<version>3.1.1</version>
 				<executions>
 					<execution>
 						<phase>package</phase>
@@ -253,7 +253,7 @@
 			<plugin>
 				<groupId>org.codehaus.mojo</groupId>
 				<artifactId>sonar-maven-plugin</artifactId>
-				<version>3.3.0.603</version>
+				<version>3.4.0.905</version>
 			</plugin>
 		</plugins>
 	</build>
