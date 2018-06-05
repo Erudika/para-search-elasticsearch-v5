@@ -343,10 +343,11 @@ public final class ElasticSearchUtils {
 	 * Works on one DB table and index only.
 	 * @param dao DAO for connecting to the DB - the primary data source
 	 * @param app an app
+	 * @param destinationIndex the new index where data will be reindexed to
 	 * @param pager a Pager instance
 	 * @return true if successful, false if index doesn't exist or failed.
 	 */
-	public static boolean rebuildIndex(DAO dao, App app, Pager... pager) {
+	public static boolean rebuildIndex(DAO dao, App app, String destinationIndex, Pager... pager) {
 		Objects.requireNonNull(dao, "DAO object cannot be null!");
 		Objects.requireNonNull(app, "App object cannot be null!");
 		if (StringUtils.isBlank(app.getAppIdentifier())) {
@@ -363,8 +364,12 @@ public final class ElasticSearchUtils {
 			String newName = indexName;
 
 			if (!app.isShared()) {
-				newName = getNewIndexName(indexName, oldName);
-				createIndexWithoutAlias(newName, -1, -1); // use defaults
+				if (StringUtils.isBlank(destinationIndex)) {
+					newName = getNewIndexName(indexName, oldName);
+					createIndexWithoutAlias(newName, -1, -1); // use defaults
+				} else {
+					newName = destinationIndex;
+				}
 			}
 
 			logger.info("rebuildIndex(): {}", indexName);

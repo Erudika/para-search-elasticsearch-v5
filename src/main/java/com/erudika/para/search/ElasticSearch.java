@@ -145,7 +145,7 @@ public class ElasticSearch implements Search {
 					if (app != null) {
 						String appid = app.getAppIdentifier();
 						if (app.isSharingIndex()) {
-							CoreUtils.getInstance().getSearch().unindexAll(appid, null, true);
+							// no need to manually cleanup the documents here - this is done in the DAO layer
 							ElasticSearchUtils.removeIndexAlias(Config.getRootAppIdentifier(), appid);
 						} else {
 							ElasticSearchUtils.deleteIndex(appid);
@@ -721,7 +721,12 @@ public class ElasticSearch implements Search {
 
 	@Override
 	public boolean rebuildIndex(DAO dao, App app, Pager... pager) {
-		return ElasticSearchUtils.rebuildIndex(dao, app, pager);
+		return ElasticSearchUtils.rebuildIndex(dao, app, null, pager);
+	}
+
+	@Override
+	public boolean rebuildIndex(DAO dao, App app, String destinationIndex, Pager... pager) {
+		return ElasticSearchUtils.rebuildIndex(dao, app, destinationIndex, pager);
 	}
 
 	@Override
