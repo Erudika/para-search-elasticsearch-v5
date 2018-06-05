@@ -13,7 +13,7 @@
 It enables your application to store objects directly to a data store (NoSQL) or any relational database (RDBMS)
 and it also automatically indexes those objects and makes them searchable.
 
-This plugin allows you to use Elasticsearch as the search engine for Para and is **only compatible with the 5.x version of Elasticsearch**. 
+This plugin allows you to use Elasticsearch as the search engine for Para and is **only compatible with the 5.x version of Elasticsearch**.
 
 ## Features
 
@@ -181,6 +181,11 @@ and returns a response indicating the number of reindexed objects and the elapse
    "reindexed": 154,
    "tookMillis": 365
 }
+```
+
+Additionally, you can specify the destination index to reindex into, which must have been created beforehand:
+```
+POST /v1/_elasticsearch/reindex?destinationIndex=yourCustomIndex
 ```
 
 ### Shared indices with alias routing
