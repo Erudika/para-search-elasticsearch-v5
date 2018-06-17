@@ -172,8 +172,9 @@ public class ElasticSearch implements Search {
 		if (po == null || StringUtils.isBlank(appid)) {
 			return;
 		}
+		ActionListener<IndexResponse> listener = ElasticSearchUtils.
+				getIndexResponseHandler(null, ex -> ElasticSearchUtils.handleFailedIndexing(dao, appid, po));
 		try {
-			ActionListener<IndexResponse> listener = ElasticSearchUtils.getIndexResponseHandler();
 			IndexRequest indexRequest = new IndexRequest(getIndexName(appid), getType(), po.getId()).
 					source(ElasticSearchUtils.getSourceFromParaObject(po));
 			if (isAsyncEnabled()) {
@@ -184,6 +185,7 @@ public class ElasticSearch implements Search {
 			logger.debug("Search.index() {}", po.getId());
 		} catch (Exception e) {
 			logger.warn(null, e);
+			listener.onFailure(e);
 		}
 	}
 
@@ -211,16 +213,25 @@ public class ElasticSearch implements Search {
 		if (StringUtils.isBlank(appid) || objects == null || objects.isEmpty()) {
 			return;
 		}
+		BulkRequest bulk = new BulkRequest();
+		for (ParaObject po : objects) {
+			bulk.add(new IndexRequest(getIndexName(appid), getType(), po.getId()).
+					source(ElasticSearchUtils.getSourceFromParaObject(po)));
+		}
+		ActionListener<BulkResponse> listener = ElasticSearchUtils.getBulkIndexResponseHandler(null,
+				ex -> ElasticSearchUtils.handleFailedBulkIndexing(dao, appid, objects));
 		try {
-			BulkRequest bulk = new BulkRequest();
-			for (ParaObject po : objects) {
-				bulk.add(new IndexRequest(getIndexName(appid), getType(), po.getId()).
-						source(ElasticSearchUtils.getSourceFromParaObject(po)));
+			if (bulk.numberOfActions() > 0) {
+				if (isAsyncEnabled()) {
+					transportClient().bulk(bulk, listener);
+				} else {
+					listener.onResponse(transportClient().bulk(bulk).actionGet());
+				}
 			}
-			bulkRequest(bulk);
 			logger.debug("Search.indexAll() {}", objects.size());
 		} catch (Exception e) {
 			logger.warn(null, e);
+			listener.onFailure(e);
 		}
 	}
 

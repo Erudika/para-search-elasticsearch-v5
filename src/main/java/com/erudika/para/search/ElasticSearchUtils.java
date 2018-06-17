@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
@@ -354,7 +355,6 @@ public final class ElasticSearchUtils {
 			return false;
 		}
 		try {
-
 			String indexName = app.getAppIdentifier().trim();
 			if (!app.isShared() && !existsIndex(indexName)) {
 				logger.info("Creating '{}' index because it doesn't exist.", indexName);
@@ -619,6 +619,17 @@ public final class ElasticSearchUtils {
 	 * @return a callback for handling ES response errors
 	 */
 	public static <T extends DocWriteResponse> ActionListener<T> getIndexResponseHandler() {
+		return getIndexResponseHandler(null, null);
+	}
+
+	/**
+	 * @param <T> type of ES Response
+	 * @param onSuccess success callback
+	 * @param onFailure failure callback
+	 * @return a callback for handling ES response errors
+	 */
+	public static <T extends DocWriteResponse> ActionListener<T> getIndexResponseHandler(Consumer<T> onSuccess,
+			Consumer<Exception> onFailure) {
 		return new ActionListener<T>() {
 			public void onResponse(T response) {
 				int status = response.status().getStatus();
@@ -626,9 +637,15 @@ public final class ElasticSearchUtils {
 					logger.warn("Indexing/unindexing object {}/{} might have failed - status {}.",
 							response.getIndex(), response.getId(), status);
 				}
+				if (onSuccess != null) {
+					onSuccess.accept(response);
+				}
 			}
 			public void onFailure(Exception e) {
 				logger.error("Indexing/unindexing failure: {}", e);
+				if (onFailure != null) {
+					onFailure.accept(e);
+				}
 			}
 		};
 	}
@@ -637,6 +654,16 @@ public final class ElasticSearchUtils {
 	 * @return a callback for handling ES response errors for bulk requests
 	 */
 	public static ActionListener<BulkResponse> getBulkIndexResponseHandler() {
+		return getBulkIndexResponseHandler(null, null);
+	}
+
+	/**
+	 * @param onSuccess success callback
+	 * @param onFailure failure callback
+	 * @return a callback for handling ES response errors for bulk requests
+	 */
+	public static ActionListener<BulkResponse> getBulkIndexResponseHandler(Consumer<BulkResponse> onSuccess,
+			Consumer<Exception> onFailure) {
 		return new ActionListener<BulkResponse>() {
 			public void onResponse(BulkResponse response) {
 				int status = response.status().getStatus();
@@ -644,11 +671,50 @@ public final class ElasticSearchUtils {
 					logger.warn("Bulk operation might have failed - status {}. Reason: {}",
 							status, response.buildFailureMessage());
 				}
+				if (onSuccess != null) {
+					onSuccess.accept(response);
+				}
 			}
 			public void onFailure(Exception e) {
 				logger.error("Bulk failure: {}", e);
+				if (onFailure != null) {
+					onFailure.accept(e);
+				}
 			}
 		};
+	}
+
+	/**
+	 * @param dao DAO
+	 * @param appid app id
+	 * @param po Para object
+	 */
+	public static void handleFailedIndexing(DAO dao, String appid, ParaObject po) {
+		boolean undo = Config.getConfigBoolean("es.undo_write_on_indexing_errors", false);
+		if (undo) {
+			dao.delete(appid, po);
+		}
+		if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
+			throw new RuntimeException("Failed to index object. " +
+					(undo ? "The object " + po.getId() + " was deleted from the data store." : ""));
+		}
+	}
+
+	/**
+	 * @param <P> type
+	 * @param dao DAO
+	 * @param appid app id
+	 * @param objects list of Para objects
+	 */
+	public static <P extends Object & ParaObject> void handleFailedBulkIndexing(DAO dao, String appid, List<P> objects) {
+		boolean undo = Config.getConfigBoolean("es.undo_write_on_indexing_errors", false);
+		if (undo) {
+			dao.deleteAll(appid, objects);
+		}
+		if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
+			throw new RuntimeException("Failed to index objects. "
+					+ (undo ? objects.size() + " objects wer deleted from the data store." : ""));
+		}
 	}
 
 	/**

@@ -59,6 +59,8 @@ para.es.auto_expand_replicas = "0-1"
 para.es.use_transportclient = false
 para.es.transportclient_host = "localhost"
 para.es.transportclient_port = 9300
+para.es.undo_write_on_indexing_errors = false
+para.es.fail_on_indexing_errors = false
 
 # proxy settings
 para.es.proxy_enabled = false
