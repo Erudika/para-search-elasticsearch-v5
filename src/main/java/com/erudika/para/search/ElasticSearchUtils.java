@@ -586,6 +586,16 @@ public final class ElasticSearchUtils {
 		return true;
 	}
 
+	/**
+	 * Executes an index refresh request.
+	 * @param appid the appid / index alias
+	 */
+	public static void refreshIndex(String appid) {
+		if (!StringUtils.isBlank(appid)) {
+			getTransportClient().admin().indices().prepareRefresh(getIndexName(appid)).get();
+		}
+	}
+
 	private static BulkResponse bulkRequest(BulkRequest bulk) throws IOException {
 		return getTransportClient().bulk(bulk).actionGet();
 	}
