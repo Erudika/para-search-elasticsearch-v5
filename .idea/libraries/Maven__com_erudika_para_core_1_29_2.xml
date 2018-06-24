@@ -1,0 +1,13 @@
+<component name="libraryTable">
+  <library name="Maven: com.erudika:para-core:1.29.2">
+    <CLASSES>
+      <root url="jar://$MAVEN_REPOSITORY$/com/erudika/para-core/1.29.2/para-core-1.29.2.jar!/" />
+    </CLASSES>
+    <JAVADOC>
+      <root url="jar://$MAVEN_REPOSITORY$/com/erudika/para-core/1.29.2/para-core-1.29.2-javadoc.jar!/" />
+    </JAVADOC>
+    <SOURCES>
+      <root url="jar://$MAVEN_REPOSITORY$/com/erudika/para-core/1.29.2/para-core-1.29.2-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

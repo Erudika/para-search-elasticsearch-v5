@@ -63,12 +63,13 @@ para.es.fail_on_indexing_errors = false
 
 # asynchronous settings
 para.es.async_enabled = false
-para.es.bulk-processor.size-limit-mb = 5
-para.es.bulk-processor.action-limit = 1000
-para.es.bulk-processor.concurrent-requests = 1
-para.es.bulk-processor.flush-interval-ms = 5000
-para.es.bulk-processor.backoff-initial-delay-ms = 50
-para.es.bulk-processor.max-num-retries = 8
+para.es.bulk.size_limit_mb = 5
+para.es.bulk.action_limit = 1000
+para.es.bulk.concurrent_requests = 1
+para.es.bulk.flush_interval_ms = 5000
+para.es.bulk.backoff_initial_delay_ms = 50
+para.es.bulk.max_num_retries = 8
+para.es.bulk.flush_immediately = false
 
 # proxy settings
 para.es.proxy_enabled = false
@@ -106,9 +107,12 @@ your Elasticsearch cluster is under heavy load, it's possible a request to index
 synchronous indexing, the burden falls on the client application to try the indexing request again. The Elasticsearch
 BulkProcessor, however, offers a useful feature to automatically retry indexing requests with exponential
 backoff between retries. If the index request fails with a `EsRejectedExecutionException`, the request
-will be retried up to `para.es.bulk-processor.max-num-retries` times. Even if your use case demands a high degree
+will be retried up to `para.es.bulk.max_num_retries` times. Even if your use case demands a high degree
 of confidence with respect to data consistency between your DAO and Search, it's still recommended to use 
-asynchronous indexing with retries enabled.
+asynchronous indexing with retries enabled. If you'd prefer to use asynchronous indexing but have the BulkProcessor
+flushed upon every invocation of index/unindex/indexAll/unindexAll, simply enabled `para.es.bulk.flush_immediately`. 
+When this option is enabled, the BulkProcessor's flush method will be called immediately after adding the documents
+in the request. This option is also useful for writing unit tests where you want ensure the documents flush promptly.
 
 ### Indexing modes
 

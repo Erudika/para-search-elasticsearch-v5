@@ -224,12 +224,12 @@ public final class ElasticSearchUtils {
 		}
 
 		if (asyncEnabled()) {
-			final int sizeLimit = Config.getConfigInt("es.bulk-processor.size-limit-mb", 5);
-			final int actionLimit = Config.getConfigInt("es.bulk-processor.action-limit", 1000);
-			final int concurrentRequests = Config.getConfigInt("es.bulk-processor.concurrent-requests", 1);
-			final int flushIntervalMs = Config.getConfigInt("es.bulk-processor.flush-interval-ms", 5000);
-			final int backoffInitialDelayMs = Config.getConfigInt("es.bulk-processor.backoff-initial-delay-ms", 50);
-			final int backoffNumRetries = Config.getConfigInt("es.bulk-processor.max-num-retries", 8);
+			final int sizeLimit = Config.getConfigInt("es.bulk.size_limit_mb", 5);
+			final int actionLimit = Config.getConfigInt("es.bulk.action_limit", 1000);
+			final int concurrentRequests = Config.getConfigInt("es.bulk.concurrent_requests", 1);
+			final int flushIntervalMs = Config.getConfigInt("es.bulk.flush_interval_ms", 5000);
+			final int backoffInitialDelayMs = Config.getConfigInt("es.bulk.backoff_initial_delay_ms", 50);
+			final int backoffNumRetries = Config.getConfigInt("es.bulk.max_num_retries", 8);
 
 			bulkProcessor = BulkProcessor.builder(searchClient, asyncRequestListener()) //
 					.setBulkSize(new ByteSizeValue(sizeLimit, ByteSizeUnit.MB)) //
@@ -241,12 +241,12 @@ public final class ElasticSearchUtils {
 					.build();
 
 			logger.info("Asynchronous indexing enabled with the following BulkProcessor settings: \n" //
-					+ "    es.bulk-processor.size-limit-mb = {}\n" //
-					+ "    es.bulk-processor.action-limit = {}\n" //
-					+ "    es.bulk-processor.concurrent-requests = {}\n" //
-					+ "    es.bulk-processor.flush-interval-ms = {}\n" //
-					+ "    es.bulk-processor.backoff-initial-delay-ms = {}\n" //
-					+ "    es.bulk-processor.max-num-retries={}", //
+					+ "    es.bulk.size_limit_mb = {}\n" //
+					+ "    es.bulk.action_limit = {}\n" //
+					+ "    es.bulk.concurrent_requests = {}\n" //
+					+ "    es.bulk.flush_interval_ms = {}\n" //
+					+ "    es.bulk.backoff_initial_delay_ms = {}\n" //
+					+ "    es.bulk.max_num_retries={}", //
 					sizeLimit, actionLimit, concurrentRequests, flushIntervalMs, backoffInitialDelayMs, backoffNumRetries);
 		} else {
 			logger.info("Synchronous indexing enabled");
@@ -296,9 +296,9 @@ public final class ElasticSearchUtils {
 					Arrays.stream(bulkResponse.getItems()) //
 							.filter(BulkItemResponse::isFailed) //
 							.forEach(item -> {
-								//FUTURE: Increment counter metric for failed document indexing
 								logger.error("Failed to execute {} operation for index '{}', document id '{}': ", //
 										item.getOpType(), item.getIndex(), item.getId(), item.getFailure().getMessage());
+								indexDocumentFailedCount();
 							});
 				}
 			}
@@ -306,7 +306,7 @@ public final class ElasticSearchUtils {
 			@Override
 			public void afterBulk(long l, BulkRequest bulkRequest, Throwable throwable) {
 				logger.error("Asynchronous indexing operation failed", throwable);
-				//FUTURE: Increment counter metric for failed indexing requests
+				indexRequestFailedCount();
 			}
 		};
 	}
@@ -323,17 +323,27 @@ public final class ElasticSearchUtils {
 					Arrays.stream(bulkResponse.getItems()) //
 							.filter(BulkItemResponse::isFailed) //
 							.forEach(item -> {
-								//FUTURE: Increment counter metric for failed document indexing
 								logger.error("Failed to execute {} operation for index '{}', document id '{}': ", //
 										item.getOpType(), item.getIndex(), item.getId(), item.getFailure().getMessage());
+								indexDocumentFailedCount();
 							});
+
+					if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
+						Throwable cause = Arrays.stream(bulkResponse.getItems()) //
+								.filter(BulkItemResponse::isFailed) //
+								.map(BulkItemResponse::getFailure) //
+								.map(BulkItemResponse.Failure::getCause) //
+								.filter(Objects::nonNull) //
+								.findFirst().orElse(null);
+						throw new RuntimeException("Synchronous indexing operation failed", cause);
+					}
 				}
 			}
 
 			@Override
 			public void onFailure(Exception ex) {
 				logger.error("Synchronous indexing operation failed", ex);
-				//FUTURE: Increment counter metric for failed indexing requests
+				indexRequestFailedCount();
 				if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
 					throw new RuntimeException("Synchronous indexing operation failed", ex);
 				}
@@ -342,6 +352,16 @@ public final class ElasticSearchUtils {
 
 		return syncListener;
 	}
+
+	/**
+	 * Increment a count on the number of individual documents that failed in an indexing operation
+	 */
+	public static void indexDocumentFailedCount() { }
+
+	/**
+	 * Increment a count on the number of failed indexing requests
+	 */
+	public static void indexRequestFailedCount() { }
 
 
 	static void executeRequests(List<DocWriteRequest> requests) {
@@ -353,7 +373,12 @@ public final class ElasticSearchUtils {
 			if (bulkProcessor == null) {
 				throw new IllegalStateException("Cannot execute async request without a bulk processor instance");
 			}
+
 			requests.forEach(bulkProcessor::add);
+
+			if (Config.getConfigBoolean("para.es.bulk.flush_immediately", false)) {
+				bulkProcessor.flush();
+			}
 		} else {
 			BulkRequest bulkRequest = new BulkRequest();
 			requests.forEach(bulkRequest::add);
