@@ -17,32 +17,15 @@
  */
 package com.erudika.para.search;
 
-import com.erudika.para.AppCreatedListener;
-import com.erudika.para.AppDeletedListener;
 import com.erudika.para.core.Address;
 import com.erudika.para.core.App;
 import com.erudika.para.core.ParaObject;
 import com.erudika.para.core.Tag;
 import com.erudika.para.core.utils.CoreUtils;
 import com.erudika.para.persistence.DAO;
-import static com.erudika.para.search.ElasticSearchUtils.PROPS_PREFIX;
-import static com.erudika.para.search.ElasticSearchUtils.PROPS_REGEX;
-import static com.erudika.para.search.ElasticSearchUtils.convertQueryStringToNestedQuery;
-import static com.erudika.para.search.ElasticSearchUtils.getIndexName;
-import static com.erudika.para.search.ElasticSearchUtils.getNestedKey;
-import static com.erudika.para.search.ElasticSearchUtils.getPager;
-import static com.erudika.para.search.ElasticSearchUtils.getTermsQuery;
-import static com.erudika.para.search.ElasticSearchUtils.getType;
-import static com.erudika.para.search.ElasticSearchUtils.getValueFieldName;
-import static com.erudika.para.search.ElasticSearchUtils.isAsyncEnabled;
-import static com.erudika.para.search.ElasticSearchUtils.keyValueBoolQuery;
-import static com.erudika.para.search.ElasticSearchUtils.nestedMode;
-import static com.erudika.para.search.ElasticSearchUtils.nestedPropsQuery;
-import static com.erudika.para.search.ElasticSearchUtils.qs;
 import com.erudika.para.utils.Config;
 import com.erudika.para.utils.Pager;
 import com.erudika.para.utils.Utils;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -51,25 +34,37 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
+
+import static com.erudika.para.search.ElasticSearchUtils.convertQueryStringToNestedQuery;
+import static com.erudika.para.search.ElasticSearchUtils.executeRequests;
+import static com.erudika.para.search.ElasticSearchUtils.getIndexName;
+import static com.erudika.para.search.ElasticSearchUtils.getNestedKey;
+import static com.erudika.para.search.ElasticSearchUtils.getPager;
+import static com.erudika.para.search.ElasticSearchUtils.getTermsQuery;
+import static com.erudika.para.search.ElasticSearchUtils.getTransportClient;
+import static com.erudika.para.search.ElasticSearchUtils.getType;
+import static com.erudika.para.search.ElasticSearchUtils.getValueFieldName;
+import static com.erudika.para.search.ElasticSearchUtils.keyValueBoolQuery;
+import static com.erudika.para.search.ElasticSearchUtils.nestedMode;
+import static com.erudika.para.search.ElasticSearchUtils.nestedPropsQuery;
+import static com.erudika.para.search.ElasticSearchUtils.PROPS_PREFIX;
+import static com.erudika.para.search.ElasticSearchUtils.PROPS_REGEX;
+import static com.erudika.para.search.ElasticSearchUtils.qs;
 import static org.apache.lucene.search.join.ScoreMode.Avg;
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.bulk.BulkRequest;
-import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.delete.DeleteRequest;
-import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
-import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.action.search.SearchType;
-import org.elasticsearch.client.Client;
 import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.IndexNotFoundException;
@@ -123,9 +118,9 @@ public class ElasticSearch implements Search {
 		this.dao = dao;
 		if (Config.isSearchEnabled()) {
 			ElasticSearchUtils.initClient();
+
 			// set up automatic index creation and deletion
-			App.addAppCreatedListener(new AppCreatedListener() {
-				public void onAppCreated(App app) {
+			App.addAppCreatedListener(app -> {
 					if (app != null) {
 						String appid = app.getAppIdentifier();
 						if (app.isSharingIndex()) {
@@ -138,10 +133,9 @@ public class ElasticSearch implements Search {
 							ElasticSearchUtils.createIndex(appid, shards, replicas);
 						}
 					}
-				}
-			});
-			App.addAppDeletedListener(new AppDeletedListener() {
-				public void onAppDeleted(App app) {
+				});
+
+			App.addAppDeletedListener(app -> {
 					if (app != null) {
 						String appid = app.getAppIdentifier();
 						if (app.isSharingIndex()) {
@@ -151,8 +145,7 @@ public class ElasticSearch implements Search {
 							ElasticSearchUtils.deleteIndex(appid);
 						}
 					}
-				}
-			});
+				});
 		}
 	}
 
@@ -163,97 +156,32 @@ public class ElasticSearch implements Search {
 		return dao;
 	}
 
-	Client transportClient() {
-		return ElasticSearchUtils.getTransportClient();
-	}
-
-	@Override
-	public void index(String appid, ParaObject po) {
-		if (po == null || StringUtils.isBlank(appid)) {
-			return;
-		}
-		ActionListener<IndexResponse> listener = ElasticSearchUtils.
-				getIndexResponseHandler(null, ex -> ElasticSearchUtils.handleFailedIndexing(dao, appid, po));
-		try {
-			IndexRequest indexRequest = new IndexRequest(getIndexName(appid), getType(), po.getId()).
-					source(ElasticSearchUtils.getSourceFromParaObject(po));
-			if (isAsyncEnabled()) {
-				transportClient().index(indexRequest, listener);
-			} else {
-				listener.onResponse(transportClient().index(indexRequest).actionGet());
-			}
-			logger.debug("Search.index() {}", po.getId());
-		} catch (Exception e) {
-			logger.warn(null, e);
-			listener.onFailure(e);
-		}
-	}
-
-	@Override
-	public void unindex(String appid, ParaObject po) {
-		if (po == null || StringUtils.isBlank(po.getId()) || StringUtils.isBlank(appid)) {
-			return;
-		}
-		try {
-			ActionListener<DeleteResponse> listener = ElasticSearchUtils.getIndexResponseHandler();
-			DeleteRequest deleteRequest = new DeleteRequest(getIndexName(appid), getType(), po.getId());
-			if (isAsyncEnabled()) {
-				transportClient().delete(deleteRequest, listener);
-			} else {
-				listener.onResponse(transportClient().delete(deleteRequest).actionGet());
-			}
-			logger.debug("Search.unindex() {}", po.getId());
-		} catch (Exception e) {
-			logger.warn(null, e);
-		}
-	}
-
-	@Override
-	public <P extends ParaObject> void indexAll(String appid, List<P> objects) {
+	private <P extends ParaObject> void indexAllInternal(String appid, List<P> objects) {
 		if (StringUtils.isBlank(appid) || objects == null || objects.isEmpty()) {
 			return;
 		}
-		BulkRequest bulk = new BulkRequest();
-		for (ParaObject po : objects) {
-			bulk.add(new IndexRequest(getIndexName(appid), getType(), po.getId()).
-					source(ElasticSearchUtils.getSourceFromParaObject(po)));
-		}
-		ActionListener<BulkResponse> listener = ElasticSearchUtils.getBulkIndexResponseHandler(null,
-				ex -> ElasticSearchUtils.handleFailedBulkIndexing(dao, appid, objects));
-		try {
-			if (bulk.numberOfActions() > 0) {
-				if (isAsyncEnabled()) {
-					transportClient().bulk(bulk, listener);
-				} else {
-					listener.onResponse(transportClient().bulk(bulk).actionGet());
-				}
-			}
-			logger.debug("Search.indexAll() {}", objects.size());
-		} catch (Exception e) {
-			logger.warn(null, e);
-			listener.onFailure(e);
-		}
+
+		List<DocWriteRequest> indexRequests = objects.stream() //
+				.map(obj -> new IndexRequest(getIndexName(appid), getType(), obj.getId()) //
+						.source((ElasticSearchUtils.getSourceFromParaObject(obj)))) //
+				.collect(Collectors.toList());
+
+		executeRequests(indexRequests);
 	}
 
-	@Override
-	public <P extends ParaObject> void unindexAll(String appid, List<P> objects) {
+	private <P extends ParaObject> void unindexAllInternal(String appid, List<P> objects) {
 		if (StringUtils.isBlank(appid) || objects == null || objects.isEmpty()) {
 			return;
 		}
-		try {
-			BulkRequest bulk = new BulkRequest();
-			for (ParaObject po : objects) {
-				bulk.add(new DeleteRequest(getIndexName(appid), getType(), po.getId()));
-			}
-			bulkRequest(bulk);
-			logger.debug("Search.unindexAll() {}", objects.size());
-		} catch (Exception e) {
-			logger.warn(null, e);
-		}
+
+		List<DocWriteRequest> deleteRequests = objects.stream() //
+				.map(obj -> new DeleteRequest(getIndexName(appid), getType(), obj.getId())) //
+				.collect(Collectors.toList());
+
+		executeRequests(deleteRequests);
 	}
 
-	@Override
-	public void unindexAll(String appid, Map<String, ?> terms, boolean matchAll) {
+	private void unindexAllTermsInternal(String appid, Map<String, ?> terms, boolean matchAll) {
 		if (StringUtils.isBlank(appid)) {
 			return;
 		}
@@ -267,30 +195,33 @@ public class ElasticSearch implements Search {
 					scroll(new TimeValue(60000)).
 					source(SearchSourceBuilder.searchSource().query(fb).size(batchSize));
 
-			scrollResp = transportClient().search(search).actionGet();
+			scrollResp = getTransportClient().search(search).actionGet();
 
-			BulkRequest bulk = new BulkRequest();
+			List<DocWriteRequest> deleteRequests = new ArrayList<>();
 			while (true) {
-				for (SearchHit hit : scrollResp.getHits()) {
-					bulk.add(new DeleteRequest(getIndexName(appid), getType(), hit.getId()));
+				scrollResp.getHits() //
+						.forEach(hit -> deleteRequests.add(new DeleteRequest(getIndexName(appid), getType(), hit.getId())));
+
+				if (deleteRequests.size() >= batchSize) {
+					unindexedCount += deleteRequests.size();
+					executeRequests(deleteRequests);
+					deleteRequests.clear();
 				}
-				if (bulk.numberOfActions() >= batchSize) {
-					unindexedCount += bulk.numberOfActions();
-					bulkRequest(bulk);
-					bulk = new BulkRequest();
-				}
+
 				// next page
 				SearchScrollRequest scroll = new SearchScrollRequest(scrollResp.getScrollId()).
 						scroll(new TimeValue(60000));
-				scrollResp = transportClient().searchScroll(scroll).actionGet();
+				scrollResp = getTransportClient().searchScroll(scroll).actionGet();
 				if (scrollResp.getHits().getHits().length == 0) {
 					break;
 				}
 			}
-			if (bulk.numberOfActions() > 0) {
-				unindexedCount += bulk.numberOfActions();
-				bulkRequest(bulk);
+
+			if (deleteRequests.size() > 0) {
+				unindexedCount += deleteRequests.size();
+				executeRequests(deleteRequests);
 			}
+
 			time = System.nanoTime() - time;
 			logger.info("Unindexed {} documents without failures, took {}s.",
 					unindexedCount, TimeUnit.NANOSECONDS.toSeconds(time));
@@ -299,19 +230,7 @@ public class ElasticSearch implements Search {
 		}
 	}
 
-	private void bulkRequest(BulkRequest bulk) throws IOException {
-		if (bulk.numberOfActions() > 0) {
-			ActionListener<BulkResponse> listener = ElasticSearchUtils.getBulkIndexResponseHandler();
-			if (isAsyncEnabled()) {
-				transportClient().bulk(bulk, listener);
-			} else {
-				listener.onResponse(transportClient().bulk(bulk).actionGet());
-			}
-		}
-	}
-
-	@Override
-	public <P extends ParaObject> P findById(String appid, String id) {
+	private <P extends ParaObject> P findByIdInternal(String appid, String id) {
 		try {
 			return ElasticSearchUtils.getParaObjectFromSource(getSource(appid, id));
 		} catch (Exception e) {
@@ -320,9 +239,8 @@ public class ElasticSearch implements Search {
 		}
 	}
 
-	@Override
 	@SuppressWarnings("unchecked")
-	public <P extends ParaObject> List<P> findByIds(String appid, List<String> ids) {
+	private <P extends ParaObject> List<P> findByIdsInternal(String appid, List<String> ids) {
 		List<P> list = new LinkedList<P>();
 		if (ids == null || ids.isEmpty()) {
 			return list;
@@ -336,8 +254,7 @@ public class ElasticSearch implements Search {
 		return list;
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findTermInList(String appid, String type,
+	private <P extends ParaObject> List<P> findTermInListInternal(String appid, String type,
 			String field, List<?> terms, Pager... pager) {
 		if (StringUtils.isBlank(field) || terms == null) {
 			return Collections.emptyList();
@@ -357,8 +274,7 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, type, qb, pager);
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findPrefix(String appid, String type,
+	private <P extends ParaObject> List<P> findPrefixInternal(String appid, String type,
 			String field, String prefix, Pager... pager) {
 		if (StringUtils.isBlank(field) || StringUtils.isBlank(prefix)) {
 			return Collections.emptyList();
@@ -372,8 +288,7 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, type, qb, pager);
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findQuery(String appid, String type,
+	private <P extends ParaObject> List<P> findQueryInternal(String appid, String type,
 			String query, Pager... pager) {
 		if (StringUtils.isBlank(query)) {
 			return Collections.emptyList();
@@ -392,8 +307,7 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, type, qb, pager);
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findNestedQuery(String appid, String type, String field,
+	private <P extends ParaObject> List<P> findNestedQueryInternal(String appid, String type, String field,
 			String query, Pager... pager) {
 		if (StringUtils.isBlank(query) || StringUtils.isBlank(field)) {
 			return Collections.emptyList();
@@ -403,8 +317,7 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, type, qb, pager);
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findWildcard(String appid, String type,
+	private <P extends ParaObject> List<P> findWildcardInternal(String appid, String type,
 			String field, String wildcard, Pager... pager) {
 		if (StringUtils.isBlank(field) || StringUtils.isBlank(wildcard)) {
 			return Collections.emptyList();
@@ -418,8 +331,7 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, type, qb, pager);
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findTagged(String appid, String type,
+	private <P extends ParaObject> List<P> findTaggedInternal(String appid, String type,
 			String[] tags, Pager... pager) {
 		if (tags == null || tags.length == 0 || StringUtils.isBlank(appid)) {
 			return Collections.emptyList();
@@ -434,9 +346,8 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, type, tagFilter, pager);
 	}
 
-	@Override
 	@SuppressWarnings("unchecked")
-	public <P extends ParaObject> List<P> findTerms(String appid, String type,
+	private <P extends ParaObject> List<P> findTermsInternal(String appid, String type,
 			Map<String, ?> terms, boolean mustMatchAll, Pager... pager) {
 		if (terms == null || terms.isEmpty()) {
 			return Collections.emptyList();
@@ -451,8 +362,7 @@ public class ElasticSearch implements Search {
 		}
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findSimilar(String appid, String type, String filterKey,
+	private <P extends ParaObject> List<P> findSimilarInternal(String appid, String type, String filterKey,
 			String[] fields, String liketext, Pager... pager) {
 		if (StringUtils.isBlank(liketext)) {
 			return Collections.emptyList();
@@ -484,8 +394,7 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, searchQueryRaw(appid, type, qb, pager));
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findTags(String appid, String keyword, Pager... pager) {
+	private <P extends ParaObject> List<P> findTagsInternal(String appid, String keyword, Pager... pager) {
 		if (StringUtils.isBlank(keyword)) {
 			return Collections.emptyList();
 		}
@@ -493,8 +402,7 @@ public class ElasticSearch implements Search {
 		return searchQuery(appid, Utils.type(Tag.class), qb, pager);
 	}
 
-	@Override
-	public <P extends ParaObject> List<P> findNearby(String appid, String type,
+	private <P extends ParaObject> List<P> findNearbyInternal(String appid, String type,
 		String query, int radius, double lat, double lng, Pager... pager) {
 
 		if (StringUtils.isBlank(type) || StringUtils.isBlank(appid)) {
@@ -543,7 +451,7 @@ public class ElasticSearch implements Search {
 	 * @param hits the search results from a query
 	 * @return the list of object found
 	 */
-	protected <P extends ParaObject> List<P> searchQuery(final String appid, SearchHits hits) {
+	private <P extends ParaObject> List<P> searchQuery(final String appid, SearchHits hits) {
 		if (hits == null) {
 			return Collections.emptyList();
 		}
@@ -600,7 +508,7 @@ public class ElasticSearch implements Search {
 	 * @param pager a {@link com.erudika.para.utils.Pager}
 	 * @return a list of search results
 	 */
-	protected SearchHits searchQueryRaw(String appid, String type, QueryBuilder query, Pager... pager) {
+	private SearchHits searchQueryRaw(String appid, String type, QueryBuilder query, Pager... pager) {
 		if (StringUtils.isBlank(appid)) {
 			return null;
 		}
@@ -637,7 +545,7 @@ public class ElasticSearch implements Search {
 
 			logger.debug("Elasticsearch query: {}", search.toString());
 
-			hits = transportClient().search(search).actionGet().getHits();
+			hits = getTransportClient().search(search).actionGet().getHits();
 			page.setCount(hits.getTotalHits());
 			if (hits.getHits().length > 0) {
 				Object id = hits.getAt(hits.getHits().length - 1).getSourceAsMap().get("_docid");
@@ -661,14 +569,14 @@ public class ElasticSearch implements Search {
 	 * @param key the object id
 	 * @return a map representation of the object
 	 */
-	protected Map<String, Object> getSource(String appid, String key) {
+	private Map<String, Object> getSource(String appid, String key) {
 		Map<String, Object> map = new HashMap<String, Object>();
 		if (StringUtils.isBlank(key) || StringUtils.isBlank(appid)) {
 			return map;
 		}
 		try {
 			GetRequest get = new GetRequest().index(getIndexName(appid)).id(key);
-			GetResponse gres = transportClient().get(get).actionGet();
+			GetResponse gres = getTransportClient().get(get).actionGet();
 			if (gres.isExists()) {
 				map = gres.getSource();
 			}
@@ -682,8 +590,7 @@ public class ElasticSearch implements Search {
 		return map;
 	}
 
-	@Override
-	public Long getCount(String appid, String type) {
+	private Long getCountInternal(String appid, String type) {
 		if (StringUtils.isBlank(appid)) {
 			return 0L;
 		}
@@ -697,7 +604,7 @@ public class ElasticSearch implements Search {
 		try {
 			SearchRequest search = new SearchRequest(getIndexName(appid)).
 					source(SearchSourceBuilder.searchSource().size(0).query(query));
-			count = transportClient().search(search).actionGet().getHits().getTotalHits();
+			count = getTransportClient().search(search).actionGet().getHits().getTotalHits();
 		} catch (Exception e) {
 			Throwable cause = e.getCause();
 			String msg = cause != null ? cause.getMessage() : e.getMessage();
@@ -706,8 +613,7 @@ public class ElasticSearch implements Search {
 		return count;
 	}
 
-	@Override
-	public Long getCount(String appid, String type, Map<String, ?> terms) {
+	private Long getCountInternal(String appid, String type, Map<String, ?> terms) {
 		if (StringUtils.isBlank(appid) || terms == null || terms.isEmpty()) {
 			return 0L;
 		}
@@ -720,7 +626,7 @@ public class ElasticSearch implements Search {
 			try {
 				SearchRequest search = new SearchRequest(getIndexName(appid)).
 					source(SearchSourceBuilder.searchSource().size(0).query(query));
-				count = transportClient().search(search).actionGet().getHits().getTotalHits();
+				count = getTransportClient().search(search).actionGet().getHits().getTotalHits();
 			} catch (Exception e) {
 				Throwable cause = e.getCause();
 				String msg = cause != null ? cause.getMessage() : e.getMessage();
@@ -749,102 +655,201 @@ public class ElasticSearch implements Search {
 
 	@Override
 	public void index(ParaObject so) {
-		index(Config.getRootAppIdentifier(), so);
+		indexAllInternal(Config.getRootAppIdentifier(), Collections.singletonList(so));
+	}
+
+	@Override
+	public void index(String appid, ParaObject po) {
+		indexAllInternal(appid, Collections.singletonList(po));
 	}
 
 	@Override
 	public void unindex(ParaObject so) {
-		unindex(Config.getRootAppIdentifier(), so);
+		unindexAllInternal(Config.getRootAppIdentifier(), Collections.singletonList(so));
+	}
+
+	@Override
+	public void unindex(String appid, ParaObject po) {
+		unindexAllInternal(appid, Collections.singletonList(po));
 	}
 
 	@Override
 	public <P extends ParaObject> void indexAll(List<P> objects) {
-		indexAll(Config.getRootAppIdentifier(), objects);
+		indexAllInternal(Config.getRootAppIdentifier(), objects);
+	}
+
+	@Override
+	public <P extends ParaObject> void indexAll(String appid, List<P> objects) {
+		indexAllInternal(appid, objects);
 	}
 
 	@Override
 	public <P extends ParaObject> void unindexAll(List<P> objects) {
-		unindexAll(Config.getRootAppIdentifier(), objects);
+		unindexAllInternal(Config.getRootAppIdentifier(), objects);
+	}
+
+	@Override
+	public <P extends ParaObject> void unindexAll(String appid, List<P> objects) {
+		unindexAllInternal(appid, objects);
 	}
 
 	@Override
 	public void unindexAll(Map<String, ?> terms, boolean matchAll) {
-		unindexAll(Config.getRootAppIdentifier(), terms, matchAll);
+		unindexAllTermsInternal(Config.getRootAppIdentifier(), terms, matchAll);
+	}
+
+	@Override
+	public void unindexAll(String appid, Map<String, ?> terms, boolean matchAll) {
+		unindexAllTermsInternal(appid, terms, matchAll);
 	}
 
 	@Override
 	public <P extends ParaObject> P findById(String id) {
-		return findById(Config.getRootAppIdentifier(), id);
+		return findByIdInternal(Config.getRootAppIdentifier(), id);
+	}
+
+	@Override
+	public <P extends ParaObject> P findById(String appid, String id) {
+		return findByIdInternal(appid, id);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findByIds(List<String> ids) {
-		return findByIds(Config.getRootAppIdentifier(), ids);
+		return findByIdsInternal(Config.getRootAppIdentifier(), ids);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findByIds(String appid, List<String> ids) {
+		return findByIdsInternal(appid, ids);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findNearby(String type,
 			String query, int radius, double lat, double lng, Pager... pager) {
-		return findNearby(Config.getRootAppIdentifier(), type, query, radius, lat, lng, pager);
+		return findNearbyInternal(Config.getRootAppIdentifier(), type, query, radius, lat, lng, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findNearby(String appid, String type,
+			String query, int radius, double lat, double lng, Pager... pager) {
+		return findNearbyInternal(appid, type, query, radius, lat, lng, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findPrefix(String type, String field, String prefix, Pager... pager) {
-		return findPrefix(Config.getRootAppIdentifier(), type, field, prefix, pager);
+		return findPrefixInternal(Config.getRootAppIdentifier(), type, field, prefix, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findPrefix(String appid, String type, String field, String prefix, Pager... pager) {
+		return findPrefixInternal(appid, type, field, prefix, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findQuery(String type, String query, Pager... pager) {
-		return findQuery(Config.getRootAppIdentifier(), type, query, pager);
+		return findQueryInternal(Config.getRootAppIdentifier(), type, query, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findQuery(String appid, String type, String query, Pager... pager) {
+		return findQueryInternal(appid, type, query, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findNestedQuery(String type, String field, String query, Pager... pager) {
-		return findNestedQuery(Config.getRootAppIdentifier(), type, field, query, pager);
+		return findNestedQueryInternal(Config.getRootAppIdentifier(), type, field, query, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findNestedQuery(String appid, String type, String field, String query, Pager... pager) {
+		return findNestedQueryInternal(appid, type, field, query, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findSimilar(String type, String filterKey, String[] fields,
 			String liketext, Pager... pager) {
-		return findSimilar(Config.getRootAppIdentifier(), type, filterKey, fields, liketext, pager);
+		return findSimilarInternal(Config.getRootAppIdentifier(), type, filterKey, fields, liketext, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findSimilar(String appid, String type, String filterKey, String[] fields,
+			String liketext, Pager... pager) {
+		return findSimilarInternal(appid, type, filterKey, fields, liketext, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findTagged(String type, String[] tags, Pager... pager) {
-		return findTagged(Config.getRootAppIdentifier(), type, tags, pager);
+		return findTaggedInternal(Config.getRootAppIdentifier(), type, tags, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findTagged(String appid, String type, String[] tags, Pager... pager) {
+		return findTaggedInternal(appid, type, tags, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findTags(String keyword, Pager... pager) {
-		return findTags(Config.getRootAppIdentifier(), keyword, pager);
+		return findTagsInternal(Config.getRootAppIdentifier(), keyword, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findTags(String appid, String keyword, Pager... pager) {
+		return findTagsInternal(appid, keyword, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findTermInList(String type, String field,
 			List<?> terms, Pager... pager) {
-		return findTermInList(Config.getRootAppIdentifier(), type, field, terms, pager);
+		return findTermInListInternal(Config.getRootAppIdentifier(), type, field, terms, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findTermInList(String appid, String type, String field,
+			List<?> terms, Pager... pager) {
+		return findTermInListInternal(appid, type, field, terms, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findTerms(String type, Map<String, ?> terms,
 			boolean mustMatchBoth, Pager... pager) {
-		return findTerms(Config.getRootAppIdentifier(), type, terms, mustMatchBoth, pager);
+		return findTermsInternal(Config.getRootAppIdentifier(), type, terms, mustMatchBoth, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findTerms(String appid, String type, Map<String, ?> terms,
+			boolean mustMatchBoth, Pager... pager) {
+		return findTermsInternal(appid, type, terms, mustMatchBoth, pager);
 	}
 
 	@Override
 	public <P extends ParaObject> List<P> findWildcard(String type, String field, String wildcard,
 			Pager... pager) {
-		return findWildcard(Config.getRootAppIdentifier(), type, field, wildcard, pager);
+		return findWildcardInternal(Config.getRootAppIdentifier(), type, field, wildcard, pager);
+	}
+
+	@Override
+	public <P extends ParaObject> List<P> findWildcard(String appid, String type, String field, String wildcard,
+			Pager... pager) {
+		return findWildcardInternal(appid, type, field, wildcard, pager);
 	}
 
 	@Override
 	public Long getCount(String type) {
-		return getCount(Config.getRootAppIdentifier(), type);
+		return getCountInternal(Config.getRootAppIdentifier(), type);
+	}
+
+	@Override
+	public Long getCount(String appid, String type) {
+		return getCountInternal(appid, type);
 	}
 
 	@Override
 	public Long getCount(String type, Map<String, ?> terms) {
-		return getCount(Config.getRootAppIdentifier(), type, terms);
+		return getCountInternal(Config.getRootAppIdentifier(), type, terms);
 	}
 
+	@Override
+	public Long getCount(String appid, String type, Map<String, ?> terms) {
+		return getCountInternal(appid, type, terms);
+	}
 }
