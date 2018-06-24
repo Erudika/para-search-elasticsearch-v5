@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -68,6 +69,7 @@ import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
@@ -233,8 +235,9 @@ public final class ElasticSearchUtils {
 					.setBulkSize(new ByteSizeValue(sizeLimit, ByteSizeUnit.MB)) //
 					.setBulkActions(actionLimit) //
 					.setConcurrentRequests(concurrentRequests) //
-					.setFlushInterval(TimeValue.timeValueMillis(flushIntervalMs)) //
-					.setBackoffPolicy(BackoffPolicy.exponentialBackoff(TimeValue.timeValueMillis(backoffInitialDelayMs), backoffNumRetries)) //
+					.setFlushInterval(flushIntervalMs > 0 ? TimeValue.timeValueMillis(flushIntervalMs) : null) //
+					.setBackoffPolicy(backoffNumRetries <= 0 ? BackoffPolicy.noBackoff() : //
+							BackoffPolicy.exponentialBackoff(TimeValue.timeValueMillis(backoffInitialDelayMs), backoffNumRetries)) //
 					.build();
 
 			logger.info("Asynchronous indexing enabled with the following BulkProcessor settings: \n" //
@@ -249,11 +252,7 @@ public final class ElasticSearchUtils {
 			logger.info("Synchronous indexing enabled");
 		}
 
-		Runtime.getRuntime().addShutdownHook(new Thread() {
-			public void run() {
-				shutdownClient();
-			}
-		});
+		Runtime.getRuntime().addShutdownHook(new Thread(ElasticSearchUtils::shutdownClient));
 
 		if (!existsIndex(Config.getRootAppIdentifier())) {
 			createIndex(Config.getRootAppIdentifier());
@@ -271,12 +270,17 @@ public final class ElasticSearchUtils {
 		}
 
 		if (bulkProcessor != null) {
+			boolean closed = false;
 			try {
-				bulkProcessor.awaitClose(10, TimeUnit.MINUTES);
+				closed = bulkProcessor.awaitClose(10, TimeUnit.MINUTES);
 			} catch (InterruptedException ex) {
 				logger.warn("Interrupted waiting for bulkProcessor to close", ex);
+			}
+
+			if (!closed) {
 				bulkProcessor.close();
 			}
+
 			bulkProcessor = null;
 		}
 	}
@@ -284,21 +288,25 @@ public final class ElasticSearchUtils {
 	private static BulkProcessor.Listener asyncRequestListener() {
 		return new BulkProcessor.Listener() {
 			@Override
-			public void beforeBulk(long l, BulkRequest bulkRequest) {
-
-			}
+			public void beforeBulk(long l, BulkRequest bulkRequest) { }
 
 			@Override
 			public void afterBulk(long l, BulkRequest bulkRequest, BulkResponse bulkResponse) {
-				int status = bulkResponse.status().getStatus();
-				if (status >= 400) {
-					logger.warn("Asynchronous indexing operation returned with status code {}", status);
+				if (bulkResponse != null && bulkResponse.hasFailures()) {
+					Arrays.stream(bulkResponse.getItems()) //
+							.filter(BulkItemResponse::isFailed) //
+							.forEach(item -> {
+								//FUTURE: Increment counter metric for failed document indexing
+								logger.error("Failed to execute {} operation for index '{}', document id '{}': ", //
+										item.getOpType(), item.getIndex(), item.getId(), item.getFailure().getMessage());
+							});
 				}
 			}
 
 			@Override
 			public void afterBulk(long l, BulkRequest bulkRequest, Throwable throwable) {
 				logger.error("Asynchronous indexing operation failed", throwable);
+				//FUTURE: Increment counter metric for failed indexing requests
 			}
 		};
 	}
@@ -311,15 +319,21 @@ public final class ElasticSearchUtils {
 		syncListener = new ActionListener<BulkResponse>() {
 			@Override
 			public void onResponse(BulkResponse bulkResponse) {
-				int status = bulkResponse.status().getStatus();
-				if (status >= 400) {
-					logger.warn("Synchronous indexing operation returned with status code {}", status);
+				if (bulkResponse != null && bulkResponse.hasFailures()) {
+					Arrays.stream(bulkResponse.getItems()) //
+							.filter(BulkItemResponse::isFailed) //
+							.forEach(item -> {
+								//FUTURE: Increment counter metric for failed document indexing
+								logger.error("Failed to execute {} operation for index '{}', document id '{}': ", //
+										item.getOpType(), item.getIndex(), item.getId(), item.getFailure().getMessage());
+							});
 				}
 			}
 
 			@Override
 			public void onFailure(Exception ex) {
 				logger.error("Synchronous indexing operation failed", ex);
+				//FUTURE: Increment counter metric for failed indexing requests
 				if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
 					throw new RuntimeException("Synchronous indexing operation failed", ex);
 				}
