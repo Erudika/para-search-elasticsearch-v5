@@ -354,12 +354,12 @@ public final class ElasticSearchUtils {
 	}
 
 	/**
-	 * Increment a count on the number of individual documents that failed in an indexing operation
+	 * Increment a count on the number of individual documents that failed in an indexing operation.
 	 */
 	public static void indexDocumentFailedCount() { }
 
 	/**
-	 * Increment a count on the number of failed indexing requests
+	 * Increment a count on the number of failed indexing requests.
 	 */
 	public static void indexRequestFailedCount() { }
 
