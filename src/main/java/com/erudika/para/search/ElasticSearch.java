@@ -156,6 +156,13 @@ public class ElasticSearch implements Search {
 		return dao;
 	}
 
+	private <P extends ParaObject> void indexAllInternal(String appid, P object) {
+		if (object == null) {
+			return;
+		}
+		indexAllInternal(appid, Collections.singletonList(object));
+	}
+
 	private <P extends ParaObject> void indexAllInternal(String appid, List<P> objects) {
 		if (StringUtils.isBlank(appid) || objects == null || objects.isEmpty()) {
 			return;
@@ -167,6 +174,13 @@ public class ElasticSearch implements Search {
 				.collect(Collectors.toList());
 
 		executeRequests(indexRequests);
+	}
+
+	private <P extends ParaObject> void unindexAllInternal(String appid, P object) {
+		if (object == null) {
+			return;
+		}
+		unindexAllInternal(appid, Collections.singletonList(object));
 	}
 
 	private <P extends ParaObject> void unindexAllInternal(String appid, List<P> objects) {
@@ -654,23 +668,23 @@ public class ElasticSearch implements Search {
 	//////////////////////////////////////////////////////////////
 
 	@Override
-	public void index(ParaObject so) {
-		indexAllInternal(Config.getRootAppIdentifier(), Collections.singletonList(so));
+	public void index(ParaObject object) {
+		indexAllInternal(Config.getRootAppIdentifier(), object);
 	}
 
 	@Override
-	public void index(String appid, ParaObject po) {
-		indexAllInternal(appid, Collections.singletonList(po));
+	public void index(String appid, ParaObject object) {
+		indexAllInternal(appid, object);
 	}
 
 	@Override
-	public void unindex(ParaObject so) {
-		unindexAllInternal(Config.getRootAppIdentifier(), Collections.singletonList(so));
+	public void unindex(ParaObject object) {
+		unindexAllInternal(Config.getRootAppIdentifier(), object);
 	}
 
 	@Override
-	public void unindex(String appid, ParaObject po) {
-		unindexAllInternal(appid, Collections.singletonList(po));
+	public void unindex(String appid, ParaObject object) {
+		unindexAllInternal(appid, object);
 	}
 
 	@Override
