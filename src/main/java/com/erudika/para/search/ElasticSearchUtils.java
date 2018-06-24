@@ -224,7 +224,7 @@ public final class ElasticSearchUtils {
 		if (asyncEnabled()) {
 			final int sizeLimit = Config.getConfigInt("es.bulk-processor.size-limit-mb", 5);
 			final int actionLimit = Config.getConfigInt("es.bulk-processor.action-limit", 1000);
-			final boolean concurrentRequests = Config.getConfigBoolean("es.bulk-processor.concurrent-requests", true);
+			final int concurrentRequests = Config.getConfigInt("es.bulk-processor.concurrent-requests", 1);
 			final int flushIntervalMs = Config.getConfigInt("es.bulk-processor.flush-interval-ms", 5000);
 			final int backoffInitialDelayMs = Config.getConfigInt("es.bulk-processor.backoff-initial-delay-ms", 50);
 			final int backoffNumRetries = Config.getConfigInt("es.bulk-processor.max-num-retries", 8);
@@ -232,7 +232,7 @@ public final class ElasticSearchUtils {
 			bulkProcessor = BulkProcessor.builder(searchClient, asyncRequestListener()) //
 					.setBulkSize(new ByteSizeValue(sizeLimit, ByteSizeUnit.MB)) //
 					.setBulkActions(actionLimit) //
-					.setConcurrentRequests(concurrentRequests ? 1 : 0) //
+					.setConcurrentRequests(concurrentRequests) //
 					.setFlushInterval(TimeValue.timeValueMillis(flushIntervalMs)) //
 					.setBackoffPolicy(BackoffPolicy.exponentialBackoff(TimeValue.timeValueMillis(backoffInitialDelayMs), backoffNumRetries)) //
 					.build();
