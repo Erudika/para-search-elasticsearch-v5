@@ -228,8 +228,8 @@ public final class ElasticSearchUtils {
 					.setConcurrentRequests(Config.getConfigBoolean("es.bulk-processor.concurrent-requests", true) ? 1 : 0) //
 					.setFlushInterval(TimeValue.timeValueMillis(Config.getConfigInt("es.bulk-processor.flush-interval-ms", 5000))) //
 					.setBackoffPolicy(BackoffPolicy //
-							.exponentialBackoff(TimeValue.timeValueMillis(Config.getConfigInt("es.bulk-processor.backoff-initial-delay-ms", 50)),
-									Config.getConfigInt("es.bulk-processor.max-num-retries",8))) //
+							.exponentialBackoff(TimeValue.timeValueMillis(Config.getConfigInt("es.bulk-processor.backoff-initial-delay-ms", 50)), //
+									Config.getConfigInt("es.bulk-processor.max-num-retries", 8))) //
 					.build();
 		}
 
