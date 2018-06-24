@@ -33,6 +33,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
@@ -156,31 +157,18 @@ public class ElasticSearch implements Search {
 		return dao;
 	}
 
-	private <P extends ParaObject> void indexAllInternal(String appid, P object) {
-		if (object == null) {
-			return;
-		}
-		indexAllInternal(appid, Collections.singletonList(object));
-	}
-
 	private <P extends ParaObject> void indexAllInternal(String appid, List<P> objects) {
 		if (StringUtils.isBlank(appid) || objects == null || objects.isEmpty()) {
 			return;
 		}
 
 		List<DocWriteRequest> indexRequests = objects.stream() //
+				.filter(Objects::nonNull) //
 				.map(obj -> new IndexRequest(getIndexName(appid), getType(), obj.getId()) //
 						.source((ElasticSearchUtils.getSourceFromParaObject(obj)))) //
 				.collect(Collectors.toList());
 
 		executeRequests(indexRequests);
-	}
-
-	private <P extends ParaObject> void unindexAllInternal(String appid, P object) {
-		if (object == null) {
-			return;
-		}
-		unindexAllInternal(appid, Collections.singletonList(object));
 	}
 
 	private <P extends ParaObject> void unindexAllInternal(String appid, List<P> objects) {
@@ -189,6 +177,7 @@ public class ElasticSearch implements Search {
 		}
 
 		List<DocWriteRequest> deleteRequests = objects.stream() //
+				.filter(Objects::nonNull) //
 				.map(obj -> new DeleteRequest(getIndexName(appid), getType(), obj.getId())) //
 				.collect(Collectors.toList());
 
@@ -669,22 +658,22 @@ public class ElasticSearch implements Search {
 
 	@Override
 	public void index(ParaObject object) {
-		indexAllInternal(Config.getRootAppIdentifier(), object);
+		indexAllInternal(Config.getRootAppIdentifier(), Collections.singletonList(object));
 	}
 
 	@Override
 	public void index(String appid, ParaObject object) {
-		indexAllInternal(appid, object);
+		indexAllInternal(appid, Collections.singletonList(object));
 	}
 
 	@Override
 	public void unindex(ParaObject object) {
-		unindexAllInternal(Config.getRootAppIdentifier(), object);
+		unindexAllInternal(Config.getRootAppIdentifier(), Collections.singletonList(object));
 	}
 
 	@Override
 	public void unindex(String appid, ParaObject object) {
-		unindexAllInternal(appid, object);
+		unindexAllInternal(appid, Collections.singletonList(object));
 	}
 
 	@Override
