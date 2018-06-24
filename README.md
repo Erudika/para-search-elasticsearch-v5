@@ -104,10 +104,11 @@ larger batches of document requests will help reduce the load on the Elasticsear
 The asynchronous indexing mode also offers an appealing feature to automatically retry failed indexing requests. If
 your Elasticsearch cluster is under heavy load, it's possible a request to index new documents may be rejected. With
 synchronous indexing, the burden falls on the client application to try the indexing request again. The Elasticsearch
-BulkProcessor, however, offers an appealing feature to automatically retry indexing requests with exponential
-backoff between retries. If the index request fails with the `EsRejectedExecutionException` exception, the request
-will be retried up to `para.es.bulk-processor.max-num-retries` times. Even if your use case demands a high certainty
-of data consistency between your DAO and Search, it's still recommended to use asynchronous indexing with retries enabled.
+BulkProcessor, however, offers a useful feature to automatically retry indexing requests with exponential
+backoff between retries. If the index request fails with a `EsRejectedExecutionException`, the request
+will be retried up to `para.es.bulk-processor.max-num-retries` times. Even if your use case demands a high degree
+of confidence with respect to data consistency between your DAO and Search, it's still recommended to use 
+asynchronous indexing with retries enabled.
 
 ### Indexing modes
 

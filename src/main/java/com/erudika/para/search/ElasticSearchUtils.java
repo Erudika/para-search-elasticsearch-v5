@@ -276,16 +276,13 @@ public final class ElasticSearchUtils {
 			public void afterBulk(long l, BulkRequest bulkRequest, BulkResponse bulkResponse) {
 				int status = bulkResponse.status().getStatus();
 				if (status >= 400) {
-					logger.warn("Synchronous indexing operation returned with status code {}", status);
+					logger.warn("Asynchronous indexing operation returned with status code {}", status);
 				}
 			}
 
 			@Override
 			public void afterBulk(long l, BulkRequest bulkRequest, Throwable throwable) {
 				logger.error("Asynchronous indexing operation failed", throwable);
-				if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
-					throw new RuntimeException("Asynchronous indexing operation failed", throwable);
-				}
 			}
 		};
 	}
