@@ -335,29 +335,30 @@ public final class ElasticSearchUtils {
 								indexDocumentFailedCount();
 							});
 
-					if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
-						Throwable cause = Arrays.stream(bulkResponse.getItems()) //
+					handleFailedRequests(Arrays.stream(bulkResponse.getItems()) //
 								.filter(BulkItemResponse::isFailed) //
 								.map(BulkItemResponse::getFailure) //
 								.map(BulkItemResponse.Failure::getCause) //
 								.filter(Objects::nonNull) //
-								.findFirst().orElse(null);
-						throw new RuntimeException("Synchronous indexing operation failed", cause);
-					}
+								.findFirst().orElse(null));
 				}
 			}
 
 			@Override
 			public void onFailure(Exception ex) {
-				logger.error("Synchronous indexing operation failed", ex);
+				logger.error("Synchronous indexing operation failed!", ex);
 				indexRequestFailedCount();
-				if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
-					throw new RuntimeException("Synchronous indexing operation failed", ex);
-				}
+				handleFailedRequests(ex);
 			}
 		};
 
 		return syncListener;
+	}
+
+	private static void handleFailedRequests(Throwable t) {
+		if (t != null && Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
+			throw new RuntimeException("Synchronous indexing operation failed!", t);
+		}
 	}
 
 	/**
