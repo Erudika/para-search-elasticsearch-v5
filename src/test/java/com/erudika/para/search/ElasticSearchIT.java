@@ -20,8 +20,6 @@ package com.erudika.para.search;
 import com.erudika.para.core.App;
 import com.erudika.para.core.ParaObject;
 import com.erudika.para.core.Sysprop;
-import static com.erudika.para.search.SearchTest.appid1;
-import static com.erudika.para.search.SearchTest.u;
 import com.erudika.para.utils.Config;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -47,6 +45,7 @@ public class ElasticSearchIT extends SearchTest {
 		System.setProperty("para.cluster_name", "test");
 		System.setProperty("para.es.shards", "2");
 		System.setProperty("para.es.root_index_sharing_enabled", "true");
+		System.setProperty("para.es.bulk.flush_immediately", "true");
 		s = new ElasticSearch();
 		ElasticSearchUtils.createIndex(Config.getRootAppIdentifier());
 		ElasticSearchUtils.createIndex(appid1);

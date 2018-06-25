@@ -29,6 +29,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -36,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
-import java.util.function.Consumer;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
@@ -54,8 +55,9 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.search.WildcardQuery;
 import static org.apache.lucene.search.join.ScoreMode.Avg;
+
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.DocWriteResponse;
+import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest.AliasActions;
 import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequest;
@@ -63,14 +65,20 @@ import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
 import org.elasticsearch.action.admin.indices.get.GetIndexResponse;
+import org.elasticsearch.action.bulk.BackoffPolicy;
+import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.NestedQueryBuilder;
@@ -101,6 +109,10 @@ public final class ElasticSearchUtils {
 
 	private static final Logger logger = LoggerFactory.getLogger(ElasticSearchUtils.class);
 	private static TransportClient searchClient;
+	private static BulkProcessor bulkProcessor;
+
+	private static ActionListener<BulkResponse> syncListener;
+
 	private static final int MAX_QUERY_DEPTH = 10; // recursive depth for compound queries - bool, boost
 	private static final String DATE_FORMAT = "epoch_millis||epoch_second||yyyy-MM-dd HH:mm:ss||"
 			+ "yyyy-MM-dd||yyyy/MM/dd||yyyyMMdd||yyyy";
@@ -109,6 +121,13 @@ public final class ElasticSearchUtils {
 	static final String PROPS_PREFIX = PROPS_FIELD + ".";
 	static final String PROPS_JSON = "_" + PROPS_FIELD;
 	static final String PROPS_REGEX = "(^|.*\\W)" + PROPS_FIELD + "[\\.\\:].+";
+
+	/**
+	 * @return true if asynchronous indexing/unindexing is enabled.
+	 */
+	static boolean asyncEnabled() {
+		return Config.getConfigBoolean("es.async_enabled", false);
+	}
 
 	/**
 	 * Switches between normal indexing and indexing with nested key/value objects for Sysprop.properties.
@@ -178,7 +197,7 @@ public final class ElasticSearchUtils {
 	 * Creates an instance of the legacy transport client that talks to Elasticsearch.
 	 * @return a TransportClient instance
 	 */
-	public static Client getTransportClient() {
+	static Client getTransportClient() {
 		if (searchClient != null) {
 			return searchClient;
 		}
@@ -204,11 +223,36 @@ public final class ElasticSearchUtils {
 					+ "Para Elasticsearch plugin at https://github.com/Erudika/para-search-elasticsearch.");
 		}
 
-		Runtime.getRuntime().addShutdownHook(new Thread() {
-			public void run() {
-				shutdownClient();
-			}
-		});
+		if (asyncEnabled()) {
+			final int sizeLimit = Config.getConfigInt("es.bulk.size_limit_mb", 5);
+			final int actionLimit = Config.getConfigInt("es.bulk.action_limit", 1000);
+			final int concurrentRequests = Config.getConfigInt("es.bulk.concurrent_requests", 1);
+			final int flushIntervalMs = Config.getConfigInt("es.bulk.flush_interval_ms", 5000);
+			final int backoffInitialDelayMs = Config.getConfigInt("es.bulk.backoff_initial_delay_ms", 50);
+			final int backoffNumRetries = Config.getConfigInt("es.bulk.max_num_retries", 8);
+
+			bulkProcessor = BulkProcessor.builder(searchClient, asyncRequestListener()) //
+					.setBulkSize(new ByteSizeValue(sizeLimit, ByteSizeUnit.MB)) //
+					.setBulkActions(actionLimit) //
+					.setConcurrentRequests(concurrentRequests) //
+					.setFlushInterval(flushIntervalMs > 0 ? TimeValue.timeValueMillis(flushIntervalMs) : null) //
+					.setBackoffPolicy(backoffNumRetries <= 0 ? BackoffPolicy.noBackoff() : //
+							BackoffPolicy.exponentialBackoff(TimeValue.timeValueMillis(backoffInitialDelayMs), backoffNumRetries)) //
+					.build();
+
+			logger.info("Asynchronous indexing enabled with the following BulkProcessor settings: \n" //
+					+ "    es.bulk.size_limit_mb = {}\n" //
+					+ "    es.bulk.action_limit = {}\n" //
+					+ "    es.bulk.concurrent_requests = {}\n" //
+					+ "    es.bulk.flush_interval_ms = {}\n" //
+					+ "    es.bulk.backoff_initial_delay_ms = {}\n" //
+					+ "    es.bulk.max_num_retries={}", //
+					sizeLimit, actionLimit, concurrentRequests, flushIntervalMs, backoffInitialDelayMs, backoffNumRetries);
+		} else {
+			logger.info("Synchronous indexing enabled");
+		}
+
+		Runtime.getRuntime().addShutdownHook(new Thread(ElasticSearchUtils::shutdownClient));
 
 		if (!existsIndex(Config.getRootAppIdentifier())) {
 			createIndex(Config.getRootAppIdentifier());
@@ -223,6 +267,128 @@ public final class ElasticSearchUtils {
 		if (searchClient != null) {
 			searchClient.close();
 			searchClient = null;
+		}
+
+		if (bulkProcessor != null) {
+			boolean closed = false;
+			try {
+				closed = bulkProcessor.awaitClose(10, TimeUnit.MINUTES);
+			} catch (InterruptedException ex) {
+				logger.warn("Interrupted waiting for bulkProcessor to close", ex);
+			}
+
+			if (!closed) {
+				bulkProcessor.close();
+			}
+
+			bulkProcessor = null;
+		}
+	}
+
+	private static BulkProcessor.Listener asyncRequestListener() {
+		return new BulkProcessor.Listener() {
+			@Override
+			public void beforeBulk(long l, BulkRequest bulkRequest) { }
+
+			@Override
+			public void afterBulk(long l, BulkRequest bulkRequest, BulkResponse bulkResponse) {
+				if (bulkResponse != null && bulkResponse.hasFailures()) {
+					Arrays.stream(bulkResponse.getItems()) //
+							.filter(BulkItemResponse::isFailed) //
+							.forEach(item -> {
+								logger.error("Failed to execute {} operation for index '{}', document id '{}': ", //
+										item.getOpType(), item.getIndex(), item.getId(), item.getFailure().getMessage());
+								indexDocumentFailedCount();
+							});
+				}
+			}
+
+			@Override
+			public void afterBulk(long l, BulkRequest bulkRequest, Throwable throwable) {
+				logger.error("Asynchronous indexing operation failed", throwable);
+				indexRequestFailedCount();
+			}
+		};
+	}
+
+	private static ActionListener<BulkResponse> syncRequestListener() {
+		if (syncListener != null) {
+			return syncListener;
+		}
+
+		syncListener = new ActionListener<BulkResponse>() {
+			@Override
+			public void onResponse(BulkResponse bulkResponse) {
+				if (bulkResponse != null && bulkResponse.hasFailures()) {
+					Arrays.stream(bulkResponse.getItems()) //
+							.filter(BulkItemResponse::isFailed) //
+							.forEach(item -> {
+								logger.error("Failed to execute {} operation for index '{}', document id '{}': ", //
+										item.getOpType(), item.getIndex(), item.getId(), item.getFailure().getMessage());
+								indexDocumentFailedCount();
+							});
+
+					if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
+						Throwable cause = Arrays.stream(bulkResponse.getItems()) //
+								.filter(BulkItemResponse::isFailed) //
+								.map(BulkItemResponse::getFailure) //
+								.map(BulkItemResponse.Failure::getCause) //
+								.filter(Objects::nonNull) //
+								.findFirst().orElse(null);
+						throw new RuntimeException("Synchronous indexing operation failed", cause);
+					}
+				}
+			}
+
+			@Override
+			public void onFailure(Exception ex) {
+				logger.error("Synchronous indexing operation failed", ex);
+				indexRequestFailedCount();
+				if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
+					throw new RuntimeException("Synchronous indexing operation failed", ex);
+				}
+			}
+		};
+
+		return syncListener;
+	}
+
+	/**
+	 * Increment a count on the number of individual documents that failed in an indexing operation.
+	 */
+	public static void indexDocumentFailedCount() { }
+
+	/**
+	 * Increment a count on the number of failed indexing requests.
+	 */
+	public static void indexRequestFailedCount() { }
+
+
+	static void executeRequests(List<DocWriteRequest> requests) {
+		if (requests == null || requests.isEmpty()) {
+			return;
+		}
+
+		if (asyncEnabled()) {
+			if (bulkProcessor == null) {
+				throw new IllegalStateException("Cannot execute async request without a bulk processor instance");
+			}
+
+			requests.forEach(bulkProcessor::add);
+
+			if (Config.getConfigBoolean("para.es.bulk.flush_immediately", false)) {
+				bulkProcessor.flush();
+			}
+		} else {
+			BulkRequest bulkRequest = new BulkRequest();
+			requests.forEach(bulkRequest::add);
+
+			ActionListener<BulkResponse> listener = syncRequestListener();
+			try {
+				listener.onResponse(getTransportClient().bulk(bulkRequest).actionGet());
+			} catch (Exception ex) {
+				listener.onFailure(ex);
+			}
 		}
 	}
 
@@ -615,99 +781,6 @@ public final class ElasticSearchUtils {
 	}
 
 	/**
-	 * @param <T> type of ES Response
-	 * @return a callback for handling ES response errors
-	 */
-	public static <T extends DocWriteResponse> ActionListener<T> getIndexResponseHandler() {
-		return getIndexResponseHandler(null, null);
-	}
-
-	/**
-	 * @param <T> type of ES Response
-	 * @param onSuccess success callback
-	 * @param onFailure failure callback
-	 * @return a callback for handling ES response errors
-	 */
-	public static <T extends DocWriteResponse> ActionListener<T> getIndexResponseHandler(Consumer<T> onSuccess,
-			Consumer<Exception> onFailure) {
-		return new ActionListener<T>() {
-			public void onResponse(T response) {
-				int status = response.status().getStatus();
-				if (status >= 400) {
-					logger.warn("Indexing/unindexing object {}/{} might have failed - status {}.",
-							response.getIndex(), response.getId(), status);
-				}
-				if (onSuccess != null) {
-					onSuccess.accept(response);
-				}
-			}
-			public void onFailure(Exception e) {
-				logger.error("Indexing/unindexing failure: {}", e);
-				if (onFailure != null) {
-					onFailure.accept(e);
-				}
-			}
-		};
-	}
-
-	/**
-	 * @return a callback for handling ES response errors for bulk requests
-	 */
-	public static ActionListener<BulkResponse> getBulkIndexResponseHandler() {
-		return getBulkIndexResponseHandler(null, null);
-	}
-
-	/**
-	 * @param onSuccess success callback
-	 * @param onFailure failure callback
-	 * @return a callback for handling ES response errors for bulk requests
-	 */
-	public static ActionListener<BulkResponse> getBulkIndexResponseHandler(Consumer<BulkResponse> onSuccess,
-			Consumer<Exception> onFailure) {
-		return new ActionListener<BulkResponse>() {
-			public void onResponse(BulkResponse response) {
-				int status = response.status().getStatus();
-				if (response.hasFailures() || status >= 400) {
-					logger.warn("Bulk operation might have failed - status {}. Reason: {}",
-							status, response.buildFailureMessage());
-				}
-				if (onSuccess != null) {
-					onSuccess.accept(response);
-				}
-			}
-			public void onFailure(Exception e) {
-				logger.error("Bulk failure: {}", e);
-				if (onFailure != null) {
-					onFailure.accept(e);
-				}
-			}
-		};
-	}
-
-	/**
-	 * @param dao DAO
-	 * @param appid app id
-	 * @param po Para object
-	 */
-	public static void handleFailedIndexing(DAO dao, String appid, ParaObject po) {
-		if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
-			throw new RuntimeException("Failed to index object " + po.getId() + "!");
-		}
-	}
-
-	/**
-	 * @param <P> type
-	 * @param dao DAO
-	 * @param appid app id
-	 * @param objects list of Para objects
-	 */
-	public static <P extends Object & ParaObject> void handleFailedBulkIndexing(DAO dao, String appid, List<P> objects) {
-		if (Config.getConfigBoolean("es.fail_on_indexing_errors", false)) {
-			throw new RuntimeException("Failed to index " + objects.size() + " objects!");
-		}
-	}
-
-	/**
 	 * Check if cluster status is green or yellow.
 	 * @return false if status is red
 	 */
@@ -719,13 +792,6 @@ public final class ElasticSearchUtils {
 			logger.error(null, e);
 		}
 		return false;
-	}
-
-	/**
-	 * @return true if asynchronous indexing/unindexing is enabled.
-	 */
-	static boolean isAsyncEnabled() {
-		return Config.getConfigBoolean("es.async_enabled", false);
 	}
 
 	/**
@@ -865,8 +931,6 @@ public final class ElasticSearchUtils {
 	 * Rearranges properites to prevent field mapping explosion, for example:
 	 * properties: [{k: key1, v: value1}, {k: key2, v: value2}...]
 	 * @param objectData original object properties
-	 * @param keysAndValues a list of key/value objects, each containing one property
-	 * @param fieldPrefix a field prefix, e.g. "properties.key"
 	 */
 	@SuppressWarnings("unchecked")
 	private static List<Map<String, Object>> getNestedProperties(Map<String, Object> objectData) {
