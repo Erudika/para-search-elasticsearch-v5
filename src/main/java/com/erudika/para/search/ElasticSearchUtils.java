@@ -123,13 +123,6 @@ public final class ElasticSearchUtils {
 	static final String PROPS_REGEX = "(^|.*\\W)" + PROPS_FIELD + "[\\.\\:].+";
 
 	/**
-	 * @return true if asynchronous indexing/unindexing is enabled.
-	 */
-	static boolean asyncEnabled() {
-		return Config.getConfigBoolean("es.async_enabled", false);
-	}
-
-	/**
 	 * Switches between normal indexing and indexing with nested key/value objects for Sysprop.properties.
 	 * When this is 'false' (normal mode), Para objects will be indexed without modification but this could lead to
 	 * a field mapping explosion and crash the ES cluster.
@@ -140,6 +133,20 @@ public final class ElasticSearchUtils {
 	 */
 	static boolean nestedMode() {
 		return Config.getConfigBoolean("es.use_nested_custom_fields", false);
+	}
+
+	/**
+	 * @return true if asynchronous indexing/unindexing is enabled.
+	 */
+	static boolean asyncEnabled() {
+		return Config.getConfigBoolean("es.async_enabled", false);
+	}
+
+	/**
+	 * @return true if we want the bulk processor to flush immediately after each bulk request.
+	 */
+	static boolean flushImmediately() {
+		return Config.getConfigBoolean("es.bulk.flush_immediately", false);
 	}
 
 	/**
@@ -376,7 +383,7 @@ public final class ElasticSearchUtils {
 
 			requests.forEach(bulkProcessor::add);
 
-			if (Config.getConfigBoolean("para.es.bulk.flush_immediately", false)) {
+			if (flushImmediately()) {
 				bulkProcessor.flush();
 			}
 		} else {
