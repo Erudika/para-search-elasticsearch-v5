@@ -372,7 +372,7 @@ public final class ElasticSearchUtils {
 	public static void indexRequestFailedCount() { }
 
 
-	static void executeRequests(List<DocWriteRequest> requests) {
+	static void executeRequests(List<DocWriteRequest<?>> requests) {
 		if (requests == null || requests.isEmpty()) {
 			return;
 		}
@@ -548,8 +548,7 @@ public final class ElasticSearchUtils {
 
 			logger.info("rebuildIndex(): {}", indexName);
 
-			BulkRequest bulk = new BulkRequest();
-			BulkResponse resp;
+			List<DocWriteRequest<?>> batch = new LinkedList<>();
 			Pager p = getPager(pager);
 			int batchSize = Config.getConfigInt("reindex_batch_size", p.getLimit());
 			long reindexedCount = 0;
@@ -561,25 +560,23 @@ public final class ElasticSearchUtils {
 				for (ParaObject obj : list) {
 					if (obj != null) {
 						// put objects from DB into the newly created index
-						bulk.add(new IndexRequest(newName, getType(), obj.getId()).source(getSourceFromParaObject(obj)));
+						batch.add(new IndexRequest(newName, getType(), obj.getId()).source(getSourceFromParaObject(obj)));
 						// index in batches of ${queueSize} objects
-						if (bulk.numberOfActions() >= batchSize) {
-							reindexedCount += bulk.numberOfActions();
-							resp = bulkRequest(bulk);
-							logger.info("rebuildIndex(): indexed {}, failures: {}",
-									bulk.numberOfActions(), resp.hasFailures() ? resp.buildFailureMessage() : "false");
-							bulk = new BulkRequest();
+						if (batch.size() >= batchSize) {
+							reindexedCount += batch.size();
+							executeRequests(batch);
+							logger.info("rebuildIndex(): indexed {}", batch.size());
+							batch.clear();
 						}
 					}
 				}
 			} while (!list.isEmpty());
 
 			// anything left after loop? index that too
-			if (bulk.numberOfActions() > 0) {
-				reindexedCount += bulk.numberOfActions();
-				resp = bulkRequest(bulk);
-				logger.info("rebuildIndex(): indexed {}, failures: {}",
-						bulk.numberOfActions(), resp.hasFailures() ? resp.buildFailureMessage() : "false");
+			if (batch.size() > 0) {
+				reindexedCount += batch.size();
+				executeRequests(batch);
+				logger.info("rebuildIndex(): indexed {}", batch.size());
 			}
 
 			if (!app.isShared()) {
@@ -595,11 +592,14 @@ public final class ElasticSearchUtils {
 	}
 
 	/**
-	 * Executes an index refresh request.
+	 * Executes a synchronous index refresh request.
 	 * @param appid the appid / index alias
 	 */
 	public static void refreshIndex(String appid) {
 		if (!StringUtils.isBlank(appid)) {
+			if (asyncEnabled() && bulkProcessor != null) {
+				bulkProcessor.flush();
+			}
 			getTransportClient().admin().indices().prepareRefresh(getIndexName(appid)).get();
 		}
 	}
