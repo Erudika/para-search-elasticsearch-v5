@@ -162,7 +162,7 @@ public class ElasticSearch implements Search {
 			return;
 		}
 
-		List<DocWriteRequest> indexRequests = objects.stream() //
+		List<DocWriteRequest<?>> indexRequests = objects.stream() //
 				.filter(Objects::nonNull) //
 				.map(obj -> new IndexRequest(getIndexName(appid), getType(), obj.getId()) //
 						.source((ElasticSearchUtils.getSourceFromParaObject(obj)))) //
@@ -176,7 +176,7 @@ public class ElasticSearch implements Search {
 			return;
 		}
 
-		List<DocWriteRequest> deleteRequests = objects.stream() //
+		List<DocWriteRequest<?>> deleteRequests = objects.stream() //
 				.filter(Objects::nonNull) //
 				.map(obj -> new DeleteRequest(getIndexName(appid), getType(), obj.getId())) //
 				.collect(Collectors.toList());
@@ -200,7 +200,7 @@ public class ElasticSearch implements Search {
 
 			scrollResp = getTransportClient().search(search).actionGet();
 
-			List<DocWriteRequest> deleteRequests = new ArrayList<>();
+			List<DocWriteRequest<?>> deleteRequests = new ArrayList<>();
 			while (true) {
 				scrollResp.getHits() //
 						.forEach(hit -> deleteRequests.add(new DeleteRequest(getIndexName(appid), getType(), hit.getId())));
