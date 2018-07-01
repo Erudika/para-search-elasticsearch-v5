@@ -25,7 +25,6 @@ import com.erudika.para.persistence.DAO;
 import com.erudika.para.utils.Config;
 import com.erudika.para.utils.Pager;
 import com.erudika.para.utils.Utils;
-import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
@@ -371,7 +370,6 @@ public final class ElasticSearchUtils {
 	 */
 	public static void indexRequestFailedCount() { }
 
-
 	static void executeRequests(List<DocWriteRequest<?>> requests) {
 		if (requests == null || requests.isEmpty()) {
 			return;
@@ -607,10 +605,6 @@ public final class ElasticSearchUtils {
 			}
 			getTransportClient().admin().indices().prepareRefresh(getIndexName(appid)).get();
 		}
-	}
-
-	private static BulkResponse bulkRequest(BulkRequest bulk) throws IOException {
-		return getTransportClient().bulk(bulk).actionGet();
 	}
 
 	/**
