@@ -56,12 +56,12 @@ public class ElasticSearchIT extends SearchTest {
 
 	@AfterClass
 	public static void tearDownClass() {
+		SearchTest.cleanup();
 		ElasticSearchUtils.deleteIndex(Config.getRootAppIdentifier());
 		ElasticSearchUtils.deleteIndex(appid1);
 		ElasticSearchUtils.deleteIndex(appid2);
 		ElasticSearchUtils.deleteIndex(appid3);
 		ElasticSearchUtils.shutdownClient();
-		SearchTest.cleanup();
 	}
 
 	@Test

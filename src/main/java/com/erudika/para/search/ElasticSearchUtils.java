@@ -498,7 +498,7 @@ public final class ElasticSearchUtils {
 			return false;
 		}
 		// don't assume false, might be distructive!
-		boolean exists = true;
+		boolean exists;
 		try {
 			String indexName = appid.trim();
 			IndicesExistsRequest get = new IndicesExistsRequest(indexName);
@@ -1036,7 +1036,8 @@ public final class ElasticSearchUtils {
 	 * @return a range query
 	 */
 	static QueryBuilder range(String operator, String field, String stringValue) {
-		String key = StringUtils.replaceAll(field, "[<>=\\s]+$", "");
+		Objects.requireNonNull(field);
+		String key = field.replaceAll("[<>=\\s]+$", "");
 		boolean nestedMode = nestedMode() && field.startsWith(PROPS_PREFIX);
 		RangeQueryBuilder rfb = rangeQuery(nestedMode ? getValueFieldName(stringValue) : key);
 		if (">".equals(operator)) {
