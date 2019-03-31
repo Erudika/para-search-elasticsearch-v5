@@ -17,6 +17,7 @@
  */
 package com.erudika.para.search;
 
+import com.erudika.para.Para;
 import com.erudika.para.core.App;
 import com.erudika.para.core.ParaObject;
 import com.erudika.para.core.Sysprop;
@@ -258,7 +259,7 @@ public final class ElasticSearchUtils {
 			logger.info("Synchronous indexing enabled");
 		}
 
-		Runtime.getRuntime().addShutdownHook(new Thread(ElasticSearchUtils::shutdownClient));
+		Para.addDestroyListener(ElasticSearchUtils::shutdownClient);
 
 		if (!existsIndex(Config.getRootAppIdentifier())) {
 			createIndex(Config.getRootAppIdentifier());
