@@ -209,7 +209,7 @@ public final class ElasticSearchUtils {
 			return searchClient;
 		}
 		// https://www.elastic.co/guide/en/elasticsearch/client/java-api/current/client.html
-		logger.warn("Using Transport client, which is scheduled for deprecation in Elasticsearch 7.x.");
+		logger.warn("Using Transport client, which was deprecated in Elasticsearch 7.0.");
 		String esHost = Config.getConfigParam("es.transportclient_host", "localhost");
 		int esPort = Config.getConfigInt("es.transportclient_port", 9300);
 		Settings.Builder settings = Settings.builder();
