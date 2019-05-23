@@ -478,10 +478,11 @@ public final class ElasticSearchUtils {
 			return false;
 		}
 		try {
-			String indexName = getIndexNameWithWildcard(appid.trim());
-			logger.info("Deleted ES index '{}'.", indexName);
+			// wildcard deletion might fail if "action.destructive_requires_name" is "true"
+			String indexName = getIndexNameForAlias(appid.trim());
 			DeleteIndexRequest delete = new DeleteIndexRequest(indexName);
 			getTransportClient().admin().indices().delete(delete).actionGet();
+			logger.info("Deleted ES index '{}'.", indexName);
 		} catch (Exception e) {
 			logger.warn(null, e);
 			return false;
