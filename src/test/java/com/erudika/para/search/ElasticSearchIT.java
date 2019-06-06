@@ -206,6 +206,7 @@ public class ElasticSearchIT extends SearchTest {
 		owner1.put("nestedTags", Arrays.asList("one1", "one2"));
 		owner2.put("nestedTags", Arrays.asList("two1", "two2"));
 		owner3.put("nestedTags", Arrays.asList("tri1", "tri2"));
+		c3.setTags(Arrays.asList("kitty", "pet"));
 
 		c1.addProperty("owner", owner1);
 		c2.addProperty("owner", owner2);
@@ -244,6 +245,9 @@ public class ElasticSearchIT extends SearchTest {
 		List<ParaObject> r35 = s.findQuery(indexInNestedMode, "cat", "properties.owner.age:[* TO *]");
 		List<ParaObject> r36 = s.findQuery(indexInNestedMode, "cat", "properties.owner.nestedArray[1].sk:two2");
 		assertTrue(s.findQuery(indexInNestedMode, "cat", "dog AND properties.owner.age:34").isEmpty());
+		assertEquals(1, s.findQuery(indexInNestedMode, "cat", "pet AND properties.owner.age:35").size());
+		assertEquals(1, s.findQuery(indexInNestedMode, "cat", "pet").size());
+		assertEquals(2, s.findQuery(indexInNestedMode, "cat", "pet OR Bob").size());
 		assertEquals(3, s.findQuery(indexInNestedMode, "cat", "*").size());
 		assertEquals(1, s.findQuery(indexInNestedMode, "cat", "dog OR properties.owner.age:34").size());
 		assertEquals(3, s.findQuery(indexInNestedMode, "cat", "properties.owner.name:[alice TO chris]").size());
@@ -303,6 +307,11 @@ public class ElasticSearchIT extends SearchTest {
 		assertFalse(res.isEmpty());
 		assertEquals(c2, res.get(0));
 
+		// findQuery - without properties prefix, should search across all fields, nested or otherwise
+		assertEquals(1, s.findQuery(indexInNestedMode, "cat", "different").size());
+		assertEquals(1, s.findQuery(indexInNestedMode, "cat", "totally").size());
+		assertEquals(0, s.findQuery(indexInNestedMode, "cat", "totally AND properties.text:(testing*)").size());
+		assertEquals(3, s.findQuery(indexInNestedMode, "cat", "pet OR sentence").size());
 
 		s.unindexAll(indexInNestedMode, Arrays.asList(c1, c2, c3));
 		ElasticSearchUtils.deleteIndex(indexInNestedMode);

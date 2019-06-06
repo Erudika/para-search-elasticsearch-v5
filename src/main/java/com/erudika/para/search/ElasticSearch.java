@@ -54,7 +54,6 @@ import static com.erudika.para.search.ElasticSearchUtils.keyValueBoolQuery;
 import static com.erudika.para.search.ElasticSearchUtils.nestedMode;
 import static com.erudika.para.search.ElasticSearchUtils.nestedPropsQuery;
 import static com.erudika.para.search.ElasticSearchUtils.PROPS_PREFIX;
-import static com.erudika.para.search.ElasticSearchUtils.PROPS_REGEX;
 import static com.erudika.para.search.ElasticSearchUtils.qs;
 import static org.apache.lucene.search.join.ScoreMode.Avg;
 import org.elasticsearch.action.DocWriteRequest;
@@ -300,7 +299,7 @@ public class ElasticSearch implements Search {
 		// a basic implementation of support for nested queries in query string
 		// https://github.com/elastic/elasticsearch/issues/11322
 		QueryBuilder qb;
-		if (nestedMode() && query.matches(PROPS_REGEX)) {
+		if (nestedMode()) {
 			qb = convertQueryStringToNestedQuery(query);
 			if (qb == null) {
 				return Collections.emptyList();
