@@ -87,20 +87,20 @@ This could be a Java system property or part of a `application.conf` file on the
 This tells Para to use the Elasticsearch implementation instead of the default (Lucene).
 
 ### Synchronous versus Asynchronous Indexing
-The Elasticsearch plugin supports both synchronous (default) and asynchronous indexing modes. 
-For synchronous indexing, the Elasticsearch plugin will make a single, blocking request through the client 
+The Elasticsearch plugin supports both synchronous (default) and asynchronous indexing modes.
+For synchronous indexing, the Elasticsearch plugin will make a single, blocking request through the client
 and wait for a response. This means each document operation (index, reindex, or delete) invokes
 a new client request. For certain applications, this can induce heavy load on the Elasticsearch cluster.
 The advantage of synchronous indexing, however, is the result of the request can be communicated back
 to the client application. If the setting `para.es.fail_on_indexing_errors` is set to `true`, synchronous
-requests that result in an error will propagate back to the client application with an HTTP error code. 
+requests that result in an error will propagate back to the client application with an HTTP error code.
 
 The asynchronous indexing mode uses the Elasticsearch BulkProcessor for batching all requests to the Elasticsearch
 cluster. If the asynchronous mode is enabled, all document requests will be fed into the BulkProcessor, which
-will flush the requests to the cluster on occasion. There are several configurable parameters to control the 
+will flush the requests to the cluster on occasion. There are several configurable parameters to control the
 flush frequency based on document count, total document size (MB), and total duration (ms). Since Elasticsearch
 is designed as a near real-time search engine, the asynchronous mode is highly recommended. Making occasional,
-larger batches of document requests will help reduce the load on the Elasticsearch cluster. 
+larger batches of document requests will help reduce the load on the Elasticsearch cluster.
 
 The asynchronous indexing mode also offers an appealing feature to automatically retry failed indexing requests. If
 your Elasticsearch cluster is under heavy load, it's possible a request to index new documents may be rejected. With
@@ -108,9 +108,9 @@ synchronous indexing, the burden falls on the client application to try the inde
 BulkProcessor, however, offers a useful feature to automatically retry indexing requests with exponential
 backoff between retries. If the index request fails with a `EsRejectedExecutionException`, the request
 will be retried up to `para.es.bulk.max_num_retries` times. Even if your use case demands a high degree
-of confidence with respect to data consistency between your DAO and Search, it's still recommended to use 
+of confidence with respect to data consistency between your DAO and Search, it's still recommended to use
 asynchronous indexing with retries enabled. If you'd prefer to use asynchronous indexing but have the BulkProcessor
-flushed upon every invocation of index/unindex/indexAll/unindexAll, simply enabled `para.es.bulk.flush_immediately`. 
+flushed upon every invocation of index/unindex/indexAll/unindexAll, simply enabled `para.es.bulk.flush_immediately`.
 When this option is enabled, the BulkProcessor's flush method will be called immediately after adding the documents
 in the request. This option is also useful for writing unit tests where you want ensure the documents flush promptly.
 
@@ -157,6 +157,8 @@ Examples of query string queries:
 /v1/search?q=term AND properties.owner.age:[* TO 34]
 /v1/search?q=properties.owner.name:alice OR properties.owner.pets[1].name=whiskers
 ```
+**Note:** Sorting on nested fields works only with numeric data. For example, sorting on a field `properties.year` will
+work, but sorting on `properties.month` won't (applicable only to the "nested" mode).
 
 ### Calling Elasticsearch through the proxy endpoint
 
