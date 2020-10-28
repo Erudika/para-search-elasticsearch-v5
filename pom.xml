@@ -120,10 +120,10 @@
 
 	<build>
 		<plugins>
-			<plugin>
+<!--			<plugin>
 				<groupId>com.github.alexcojocaru</groupId>
 				<artifactId>elasticsearch-maven-plugin</artifactId>
-				<version>6.8</version>
+				<version>6.19</version>
 				<configuration>
 					<skip>${skipITs}</skip>
 					<autoCreateIndex>false</autoCreateIndex>
@@ -148,7 +148,7 @@
 						</goals>
 					</execution>
 				</executions>
-			</plugin>
+			</plugin>-->
 
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
