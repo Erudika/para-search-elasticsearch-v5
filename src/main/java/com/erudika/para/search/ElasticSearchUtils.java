@@ -70,7 +70,11 @@ import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.bulk.BulkItemResponse;
+import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.cluster.health.ClusterHealthStatus;
@@ -95,6 +99,7 @@ import static org.elasticsearch.index.query.QueryBuilders.rangeQuery;
 import static org.elasticsearch.index.query.QueryBuilders.termQuery;
 import static org.elasticsearch.index.query.QueryBuilders.wildcardQuery;
 import org.elasticsearch.index.query.RangeQueryBuilder;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortBuilder;
 import org.elasticsearch.search.sort.SortBuilders;
@@ -410,7 +415,7 @@ public final class ElasticSearchUtils {
 			return false;
 		}
 		if (shards <= 0) {
-			shards = Config.getConfigInt("es.shards", 5);
+			shards = Config.getConfigInt("es.shards", 2);
 		}
 		if (replicas < 0) {
 			replicas = Config.getConfigInt("es.replicas", 0);
@@ -446,7 +451,7 @@ public final class ElasticSearchUtils {
 	 * @return true if created
 	 */
 	public static boolean createIndex(String appid) {
-		return createIndex(appid, Config.getConfigInt("es.shards", 5), Config.getConfigInt("es.replicas", 0));
+		return createIndex(appid, Config.getConfigInt("es.shards", 2), Config.getConfigInt("es.replicas", 0));
 	}
 
 	/**
@@ -615,6 +620,49 @@ public final class ElasticSearchUtils {
 	}
 
 	/**
+	 * Executes a scroll search + delete requests in batches, similar to "delete by query".
+	 * @param appid the appid / index alias
+	 * @param fb query
+	 * @return number of unindexed documents.
+	 */
+	public static long deleteByQuery(String appid, QueryBuilder fb) {
+		int unindexedCount = 0;
+		int batchSize = Config.getConfigInt("unindex_batch_size", 1000);
+		SearchResponse scrollResp;
+		SearchRequest search = new SearchRequest(getIndexName(appid)).
+				scroll(new TimeValue(60000)).
+				source(SearchSourceBuilder.searchSource().query(fb).size(batchSize));
+
+		scrollResp = getTransportClient().search(search).actionGet();
+
+		List<DocWriteRequest<?>> deleteRequests = new ArrayList<>();
+		while (true) {
+			scrollResp.getHits() //
+					.forEach(hit -> deleteRequests.add(new DeleteRequest(getIndexName(appid), getType(), hit.getId())));
+
+			if (deleteRequests.size() >= batchSize) {
+				unindexedCount += deleteRequests.size();
+				executeRequests(deleteRequests);
+				deleteRequests.clear();
+			}
+
+			// next page
+			SearchScrollRequest scroll = new SearchScrollRequest(scrollResp.getScrollId()).
+					scroll(new TimeValue(60000));
+			scrollResp = getTransportClient().searchScroll(scroll).actionGet();
+			if (scrollResp.getHits().getHits().length == 0) {
+				break;
+			}
+		}
+
+		if (deleteRequests.size() > 0) {
+			unindexedCount += deleteRequests.size();
+			executeRequests(deleteRequests);
+		}
+		return unindexedCount;
+	}
+
+	/**
 	 * @param pager an array of optional Pagers
 	 * @return the first {@link Pager} object in the array or a new Pager
 	 */
@@ -726,14 +774,14 @@ public final class ElasticSearchUtils {
 		if (StringUtils.isBlank(aliasName) || !existsIndex(indexName)) {
 			return false;
 		}
+		String alias = aliasName.trim();
 		try {
-			String alias = aliasName.trim();
 			String index = getIndexNameWithWildcard(indexName.trim());
 			AliasActions removeAction = AliasActions.remove().index(index).alias(alias);
 			IndicesAliasesRequest actions = new IndicesAliasesRequest().addAliasAction(removeAction);
 			return getTransportClient().admin().indices().aliases(actions).actionGet().isAcknowledged();
 		} catch (Exception e) {
-			logger.error(null, e);
+			logger.warn("Failed to remove index alias '" + alias + "' for index " + indexName + ": {}", e.getMessage());
 			return false;
 		}
 	}

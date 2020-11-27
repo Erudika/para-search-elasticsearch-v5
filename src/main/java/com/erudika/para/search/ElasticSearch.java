@@ -17,6 +17,7 @@
  */
 package com.erudika.para.search;
 
+import com.erudika.para.Para;
 import com.erudika.para.core.Address;
 import com.erudika.para.core.App;
 import com.erudika.para.core.ParaObject;
@@ -40,7 +41,6 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
-
 import static com.erudika.para.search.ElasticSearchUtils.convertQueryStringToNestedQuery;
 import static com.erudika.para.search.ElasticSearchUtils.executeRequests;
 import static com.erudika.para.search.ElasticSearchUtils.getIndexName;
@@ -62,11 +62,8 @@ import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
-import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.common.unit.DistanceUnit;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.MoreLikeThisQueryBuilder.Item;
@@ -102,6 +99,16 @@ public class ElasticSearch implements Search {
 	private static final Logger logger = LoggerFactory.getLogger(ElasticSearch.class);
 	private DAO dao;
 
+	static {
+		if (Config.isSearchEnabled() && Config.getConfigParam("search", "").
+				equalsIgnoreCase(ElasticSearch.class.getSimpleName())) {
+			ElasticSearchUtils.initClient();
+			// set up automatic index creation and deletion
+			App.addAppCreatedListener((App app) -> createIndexInteral(app));
+			App.addAppDeletedListener((App app) -> deleteIndexInternal(app));
+		}
+	}
+
 	/**
 	 * No-args constructor.
 	 */
@@ -116,38 +123,6 @@ public class ElasticSearch implements Search {
 	@Inject
 	public ElasticSearch(DAO dao) {
 		this.dao = dao;
-		if (Config.isSearchEnabled()) {
-			if (Config.getConfigParam("search", "").equalsIgnoreCase(ElasticSearch.class.getSimpleName())) {
-				ElasticSearchUtils.initClient();
-			}
-			// set up automatic index creation and deletion
-			App.addAppCreatedListener(app -> {
-					if (app != null) {
-						String appid = app.getAppIdentifier();
-						if (app.isSharingIndex()) {
-							ElasticSearchUtils.addIndexAliasWithRouting(Config.getRootAppIdentifier(), appid);
-						} else {
-							int shards = app.isRootApp() ? Config.getConfigInt("es.shards", 5)
-									: Config.getConfigInt("es.shards_for_child_apps", 2);
-							int replicas = app.isRootApp() ? Config.getConfigInt("es.replicas", 0)
-									: Config.getConfigInt("es.replicas_for_child_apps", 0);
-							ElasticSearchUtils.createIndex(appid, shards, replicas);
-						}
-					}
-				});
-
-			App.addAppDeletedListener(app -> {
-					if (app != null) {
-						String appid = app.getAppIdentifier();
-						if (app.isSharingIndex()) {
-							// no need to manually cleanup the documents here - this is done in the DAO layer
-							ElasticSearchUtils.removeIndexAlias(Config.getRootAppIdentifier(), appid);
-						} else {
-							ElasticSearchUtils.deleteIndex(appid);
-						}
-					}
-				});
-		}
 	}
 
 	private DAO getDAO() {
@@ -189,42 +164,9 @@ public class ElasticSearch implements Search {
 			return;
 		}
 		try {
-			int batchSize = Config.getConfigInt("unindex_batch_size", 1000);
-			int unindexedCount = 0;
 			long time = System.nanoTime();
-			SearchResponse scrollResp;
-			QueryBuilder fb = (terms == null || terms.isEmpty()) ? matchAllQuery() : getTermsQuery(terms, matchAll);
-			SearchRequest search = new SearchRequest(getIndexName(appid)).
-					scroll(new TimeValue(60000)).
-					source(SearchSourceBuilder.searchSource().query(fb).size(batchSize));
-
-			scrollResp = getTransportClient().search(search).actionGet();
-
-			List<DocWriteRequest<?>> deleteRequests = new ArrayList<>();
-			while (true) {
-				scrollResp.getHits() //
-						.forEach(hit -> deleteRequests.add(new DeleteRequest(getIndexName(appid), getType(), hit.getId())));
-
-				if (deleteRequests.size() >= batchSize) {
-					unindexedCount += deleteRequests.size();
-					executeRequests(deleteRequests);
-					deleteRequests.clear();
-				}
-
-				// next page
-				SearchScrollRequest scroll = new SearchScrollRequest(scrollResp.getScrollId()).
-						scroll(new TimeValue(60000));
-				scrollResp = getTransportClient().searchScroll(scroll).actionGet();
-				if (scrollResp.getHits().getHits().length == 0) {
-					break;
-				}
-			}
-
-			if (deleteRequests.size() > 0) {
-				unindexedCount += deleteRequests.size();
-				executeRequests(deleteRequests);
-			}
-
+			long unindexedCount = ElasticSearchUtils.deleteByQuery(appid,
+					(terms == null || terms.isEmpty()) ? matchAllQuery() : getTermsQuery(terms, matchAll));
 			time = System.nanoTime() - time;
 			logger.info("Unindexed {} documents without failures, took {}s.",
 					unindexedCount, TimeUnit.NANOSECONDS.toSeconds(time));
@@ -653,6 +595,45 @@ public class ElasticSearch implements Search {
 	@Override
 	public boolean isValidQueryString(String queryString) {
 		return ElasticSearchUtils.isValidQueryString(queryString);
+	}
+
+	@Override
+	public void createIndex(App app) {
+		createIndexInteral(app);
+	}
+
+	private static void createIndexInteral(App app) {
+		if (app != null) {
+			String appid = app.getAppIdentifier();
+			if (app.isSharingIndex()) {
+				ElasticSearchUtils.addIndexAliasWithRouting(Config.getRootAppIdentifier(), appid);
+			} else {
+				int shards = app.isRootApp() ? Config.getConfigInt("es.shards", 2)
+						: Config.getConfigInt("es.shards_for_child_apps", 1);
+				int replicas = app.isRootApp() ? Config.getConfigInt("es.replicas", 0)
+						: Config.getConfigInt("es.replicas_for_child_apps", 0);
+				ElasticSearchUtils.createIndex(appid, shards, replicas);
+			}
+		}
+	}
+
+	@Override
+	public void deleteIndex(App app) {
+		deleteIndexInternal(app);
+	}
+
+	private static void deleteIndexInternal(App app) {
+		if (app != null) {
+			String appid = app.getAppIdentifier();
+			if (app.isSharingIndex()) {
+				Para.asyncExecute(() -> {
+					ElasticSearchUtils.deleteByQuery(app.getAppIdentifier(), matchAllQuery());
+					ElasticSearchUtils.removeIndexAlias(Config.getRootAppIdentifier(), appid);
+				});
+			} else {
+				ElasticSearchUtils.deleteIndex(appid);
+			}
+		}
 	}
 
 	//////////////////////////////////////////////////////////////
