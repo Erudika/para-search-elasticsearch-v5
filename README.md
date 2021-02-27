@@ -9,6 +9,10 @@
 
 ## What is this?
 
+
+**THIS PROJECT IS DEPRECATED AND WILL NOT BE MAINTAINED ANY LONGER** 
+Please use the latest [Para plugin for Elasticsearch](https://github.com/Erudika/para-search-elasticsearch)
+
 **Para** was designed as a simple and modular back-end framework for object persistence and retrieval.
 It enables your application to store objects directly to a data store (NoSQL) or any relational database (RDBMS)
 and it also automatically indexes those objects and makes them searchable.
